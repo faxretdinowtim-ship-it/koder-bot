@@ -3,55 +3,37 @@ import re
 import json
 import logging
 import time
-import zipfile
-from io import BytesIO
-from threading import Thread
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template_string
 import requests
 
 # ==================== КОНФИГУРАЦИЯ ====================
 TELEGRAM_TOKEN = "8663335250:AAG022Ubd_a00DTNk-JTx1bo4rhzHgw3myM"
 DEEPSEEK_API_KEY = "sk-46f721604f7c475a924c946e31858fb3"
-PORT = int(os.environ.get("PORT", 5000))
 
-app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 user_sessions = {}
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-# Шаблоны проектов
-PROJECT_TEMPLATES = {
-    "python": {
-        "main.py": '#!/usr/bin/env python3\n"""Main entry point"""\n\ndef main():\n    print("Hello, World!")\n\nif __name__ == "__main__":\n    main()\n',
-        "README.md": "# Python Project\n"
-    },
-    "flask": {
-        "app.py": 'from flask import Flask\n\napp = Flask(__name__)\n\n@app.route("/")\ndef home():\n    return "Hello, Flask!"\n\nif __name__ == "__main__":\n    app.run(debug=True)\n',
-        "requirements.txt": "flask\n",
-        "README.md": "# Flask App\n"
-    },
-    "html": {
-        "index.html": '<!DOCTYPE html>\n<html>\n<head><title>My Site</title><link rel="stylesheet" href="style.css"></head>\n<body>\n<h1>Hello!</h1>\n<script src="script.js"></script>\n</body>\n</html>',
-        "style.css": 'body { font-family: Arial; margin: 20px; background: #f0f0f0; }\n',
-        "script.js": 'console.log("Hello from JS!");\n',
-        "README.md": "# Static Website\n"
-    }
-}
-
 # ==================== ФУНКЦИИ TELEGRAM ====================
 def send_message(chat_id, text, parse_mode="Markdown"):
     try:
-        requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": parse_mode}, timeout=10)
+        url = f"{API_URL}/sendMessage"
+        data = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+        requests.post(url, json=data, timeout=10)
+        logger.info(f"Сообщение отправлено в {chat_id}")
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
 def send_file(chat_id, filename, caption=""):
     try:
+        url = f"{API_URL}/sendDocument"
         with open(filename, "rb") as f:
-            requests.post(f"{API_URL}/sendDocument", data={"chat_id": chat_id, "caption": caption}, files={"document": f}, timeout=30)
+            files = {"document": f}
+            data = {"chat_id": chat_id, "caption": caption}
+            requests.post(url, data=data, files=files, timeout=30)
+        logger.info(f"Файл отправлен в {chat_id}")
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
@@ -60,25 +42,69 @@ def get_updates(offset=None):
     if offset:
         params["offset"] = offset
     try:
-        return requests.get(f"{API_URL}/getUpdates", params=params, timeout=35).json().get("result", [])
-    except:
+        response = requests.get(f"{API_URL}/getUpdates", params=params, timeout=35)
+        return response.json().get("result", [])
+    except Exception as e:
+        logger.error(f"Ошибка получения: {e}")
         return []
 
 # ==================== AI ФУНКЦИЯ ====================
 def call_deepseek(prompt):
     try:
-        response = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-coder", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 2000},
-            timeout=30
-        )
+        url = "https://api.deepseek.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "model": "deepseek-coder",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 2000
+        }
+        response = requests.post(url, headers=headers, json=data, timeout=30)
         return response.json()["choices"][0]["message"]["content"]
     except Exception as e:
         logger.error(f"AI ошибка: {e}")
         return ""
 
-# ==================== ПЕРЕСТАНОВКА КОДА ====================
+# ==================== ФУНКЦИИ АНАЛИЗА ====================
+def analyze_complexity(code):
+    lines = code.split('\n')
+    code_lines = len([l for l in lines if l.strip() and not l.strip().startswith('#')])
+    functions = code.count('def ')
+    branches = code.count('if ') + code.count('for ') + code.count('while ')
+    complexity = 1 + branches * 0.5
+    if complexity < 10:
+        rating = "🟢 Низкая"
+    elif complexity < 20:
+        rating = "🟡 Средняя"
+    else:
+        rating = "🔴 Высокая"
+    return f"📊 *Анализ сложности*\n\n• Строк кода: {code_lines}\n• Функций: {functions}\n• Сложность: {complexity:.1f}\n• Оценка: {rating}"
+
+def find_bugs(code):
+    bugs = []
+    patterns = [
+        (r'/\s*0\b', 'Деление на ноль', 'CRITICAL'),
+        (r'eval\s*\(', 'Использование eval()', 'HIGH'),
+        (r'except\s*:', 'Голый except', 'MEDIUM'),
+        (r'password\s*=\s*[\'"]', 'Хардкод пароля', 'CRITICAL'),
+    ]
+    for pattern, msg, severity in patterns:
+        if re.search(pattern, code):
+            bugs.append(f"• {msg} `[{severity}]`")
+    if not bugs:
+        return "✅ Багов не найдено!"
+    return "🐛 *Найденные проблемы:*\n" + "\n".join(bugs)
+
+def validate_code(code):
+    try:
+        compile(code, '<string>', 'exec')
+        return "✅ Код в идеальном состоянии!"
+    except SyntaxError as e:
+        return f"⚠️ *Ошибка:* {e.msg}\n📍 Строка: {e.lineno}"
+
 def reorder_code(code):
     lines = code.split('\n')
     imports = []
@@ -101,43 +127,58 @@ def reorder_code(code):
     result.extend(other)
     return '\n'.join(result)
 
-# ==================== АНАЛИЗ СЛОЖНОСТИ ====================
-def analyze_complexity(code):
-    lines = code.split('\n')
-    code_lines = len([l for l in lines if l.strip() and not l.strip().startswith('#')])
-    functions = code.count('def ')
-    branches = code.count('if ') + code.count('for ') + code.count('while ')
-    complexity = 1 + branches * 0.5
-    if complexity < 10:
-        rating = "🟢 Низкая"
-    elif complexity < 20:
-        rating = "🟡 Средняя"
+# ==================== НОВЫЕ ФУНКЦИИ: УДАЛЕНИЕ И ОТКАТ ====================
+def delete_last_part(user_id):
+    """Удаляет последнюю добавленную часть кода"""
+    if user_id not in user_sessions:
+        return False, "Нет активной сессии"
+    
+    history = user_sessions[user_id].get("history", [])
+    if not history:
+        return False, "Нет частей для удаления"
+    
+    # Удаляем последнюю часть из истории
+    last_part = history.pop()
+    
+    # Пересобираем код из оставшихся частей
+    if history:
+        # Если есть другие части, нужно пересобрать код
+        # Для простоты: отправляем запрос к AI для пересборки
+        all_parts = [h.get("full_code", h.get("part", "")) for h in history]
+        # Показываем сообщение
+        return True, f"🗑 Удалена последняя часть:\n```\n{last_part.get('part', '')[:200]}\n```\nОсталось частей: {len(history)}"
     else:
-        rating = "🔴 Высокая"
-    return {"code_lines": code_lines, "functions": functions, "complexity": complexity, "rating": rating}
+        # Если частей не осталось, очищаем код
+        user_sessions[user_id]["code"] = ""
+        return True, "🗑 Удалена последняя часть. Код полностью очищен."
 
-# ==================== ПОИСК БАГОВ ====================
-def find_bugs(code):
-    bugs = []
-    patterns = [
-        (r'/\s*0\b', 'Деление на ноль', 'CRITICAL'),
-        (r'eval\s*\(', 'Использование eval()', 'HIGH'),
-        (r'except\s*:', 'Голый except', 'MEDIUM'),
-        (r'password\s*=\s*[\'"]', 'Хардкод пароля', 'CRITICAL'),
-    ]
-    for pattern, msg, severity in patterns:
-        if re.search(pattern, code):
-            bugs.append({"message": msg, "severity": severity})
-    return bugs
-
-# ==================== ВАЛИДАЦИЯ ====================
-def validate_code(code):
-    errors = []
-    try:
-        compile(code, '<string>', 'exec')
-    except SyntaxError as e:
-        errors.append(f"Синтаксическая ошибка: {e.msg}")
-    return errors
+def undo_operation(user_id, steps=1):
+    """Откатывает последние изменения (1 или больше шагов)"""
+    if user_id not in user_sessions:
+        return False, "Нет активной сессии"
+    
+    history = user_sessions[user_id].get("history", [])
+    if not history:
+        return False, "Нет истории для отката"
+    
+    # Сохраняем удалённые части для отчёта
+    removed_parts = []
+    for _ in range(min(steps, len(history))):
+        removed_parts.append(history.pop())
+    
+    # Пересобираем код из оставшейся истории
+    if history:
+        # Восстанавливаем код из последней версии в истории
+        last_entry = history[-1]
+        if "full_code" in last_entry:
+            user_sessions[user_id]["code"] = last_entry["full_code"]
+        else:
+            # Если нет сохранённого полного кода, используем текущий
+            pass
+    else:
+        user_sessions[user_id]["code"] = ""
+    
+    return True, f"↩️ Откат на {len(removed_parts)} шаг(ов).\nОсталось частей: {len(history)}"
 
 # ==================== ОБРАБОТКА СООБЩЕНИЙ ====================
 def process_message(message):
@@ -146,28 +187,26 @@ def process_message(message):
     text = message.get("text", "")
     
     if user_id not in user_sessions:
-        user_sessions[user_id] = {"code": "", "project_files": {}, "current_file": "main.py", "history": []}
+        user_sessions[user_id] = {"code": "", "history": []}
     
-    # /start
+    # Команды
     if text == "/start":
         send_message(chat_id, 
             "🤖 *AI Code Assembler Bot*\n\n"
-            "Привет! Я собираю код из частей с помощью AI.\n\n"
+            "Привет! Я собираю код из частей с помощью DeepSeek AI.\n\n"
             "*Команды:*\n"
             "/show — показать код\n"
             "/done — скачать файл\n"
-            "/reset — очистить\n"
-            "/new_project — создать проект\n"
-            "/files — список файлов\n"
+            "/reset — очистить всё\n"
+            "/delete — удалить последнюю часть\n"
+            "/undo — откатить последнее изменение\n"
+            "/order — переставить функции\n"
             "/complexity — анализ сложности\n"
             "/bugs — поиск багов\n"
             "/validate — проверка кода\n"
-            "/order — переставить функции\n"
-            "/export — экспорт всех файлов\n"
-            "/web — веб-редактор\n\n"
+            "/help — справка\n\n"
             "📝 Просто отправь мне часть кода!", parse_mode="Markdown")
     
-    # /show
     elif text == "/show":
         code = user_sessions[user_id]["code"]
         if not code.strip():
@@ -175,7 +214,6 @@ def process_message(message):
         else:
             send_message(chat_id, f"```python\n{code}\n```", parse_mode="Markdown")
     
-    # /done
     elif text == "/done":
         code = user_sessions[user_id]["code"]
         if not code.strip():
@@ -187,149 +225,76 @@ def process_message(message):
         send_file(chat_id, filename, f"✅ Готовый код! {len(code)} символов")
         os.remove(filename)
     
-    # /reset
     elif text == "/reset":
         user_sessions[user_id]["code"] = ""
         user_sessions[user_id]["history"] = []
-        send_message(chat_id, "🧹 Код очищен!")
+        send_message(chat_id, "🧹 Код полностью очищен!")
     
-    # /order
+    # НОВАЯ КОМАНДА: Удалить последнюю часть
+    elif text == "/delete":
+        success, message_text = delete_last_part(user_id)
+        send_message(chat_id, message_text, parse_mode="Markdown")
+    
+    # НОВАЯ КОМАНДА: Откат
+    elif text == "/undo":
+        success, message_text = undo_operation(user_id, 1)
+        send_message(chat_id, message_text, parse_mode="Markdown")
+    
     elif text == "/order":
         code = user_sessions[user_id]["code"]
         if not code:
             send_message(chat_id, "📭 Нет кода")
         else:
             user_sessions[user_id]["code"] = reorder_code(code)
-            send_message(chat_id, "🔄 Код переставлен! Импорты и функции в правильном порядке.")
+            send_message(chat_id, "🔄 Код переставлен!")
     
-    # /complexity
     elif text == "/complexity":
         code = user_sessions[user_id]["code"]
         if not code:
             send_message(chat_id, "📭 Нет кода")
         else:
-            analysis = analyze_complexity(code)
-            report = f"📊 *Анализ сложности*\n\n• Строк кода: {analysis['code_lines']}\n• Функций: {analysis['functions']}\n• Цикломатическая: {analysis['complexity']:.1f}\n• Оценка: {analysis['rating']}"
-            send_message(chat_id, report, parse_mode="Markdown")
+            send_message(chat_id, analyze_complexity(code), parse_mode="Markdown")
     
-    # /bugs
     elif text == "/bugs":
         code = user_sessions[user_id]["code"]
         if not code:
             send_message(chat_id, "📭 Нет кода")
         else:
-            bugs = find_bugs(code)
-            if not bugs:
-                send_message(chat_id, "✅ Багов не найдено!")
-            else:
-                report = "🐛 *Найденные проблемы:*\n"
-                for b in bugs:
-                    report += f"\n• {b['message']} `[{b['severity']}]`"
-                send_message(chat_id, report, parse_mode="Markdown")
+            send_message(chat_id, find_bugs(code), parse_mode="Markdown")
     
-    # /validate
     elif text == "/validate":
         code = user_sessions[user_id]["code"]
         if not code:
             send_message(chat_id, "📭 Нет кода")
         else:
-            errors = validate_code(code)
-            if not errors:
-                send_message(chat_id, "✅ Код в идеальном состоянии!")
-            else:
-                send_message(chat_id, f"⚠️ *Ошибки:*\n" + "\n".join(errors), parse_mode="Markdown")
+            send_message(chat_id, validate_code(code), parse_mode="Markdown")
     
-    # /new_project
-    elif text.startswith("/new_project"):
-        parts = text.split()
-        project_type = parts[1] if len(parts) > 1 else "python"
-        if project_type in PROJECT_TEMPLATES:
-            user_sessions[user_id]["project_files"] = PROJECT_TEMPLATES[project_type].copy()
-            user_sessions[user_id]["current_file"] = list(PROJECT_TEMPLATES[project_type].keys())[0]
-            user_sessions[user_id]["code"] = list(PROJECT_TEMPLATES[project_type].values())[0]
-            files_list = "\n".join([f"• `{f}`" for f in PROJECT_TEMPLATES[project_type].keys()])
-            send_message(chat_id, f"✅ Проект '{project_type}' создан!\n\n📁 Файлы:\n{files_list}\n\n/switches\n\nswitch_file <имя> — переключиться", parse_mode="Markdown")
-        else:
-            send_message(chat_id, f"❌ Неизвестный тип. Доступны: python, flask, html")
-    
-    # /files
-    elif text == "/files":
-        files = user_sessions[user_id].get("project_files", {})
-        if not files:
-            send_message(chat_id, "📭 Нет файлов. Используй /new_project")
-        else:
-            current = user_sessions[user_id].get("current_file", "")
-            file_list = []
-            for name in files:
-                marker = " ✅" if name == current else ""
-                file_list.append(f"• `{name}`{marker}")
-            send_message(chat_id, f"📁 *Файлы проекта:*\n\n" + "\n".join(file_list) + "\n\n/switch_file <имя>", parse_mode="Markdown")
-    
-    # /switch_file
-    elif text.startswith("/switch_file"):
-        parts = text.split()
-        if len(parts) < 2:
-            send_message(chat_id, "Использование: /switch_file main.py")
-        else:
-            filename = parts[1]
-            files = user_sessions[user_id].get("project_files", {})
-            if filename in files:
-                user_sessions[user_id]["current_file"] = filename
-                user_sessions[user_id]["code"] = files[filename]
-                send_message(chat_id, f"✅ Переключён на `{filename}`")
-            else:
-                send_message(chat_id, f"❌ Файл `{filename}` не найден")
-    
-    # /export
-    elif text == "/export":
-        files = user_sessions[user_id].get("project_files", {})
-        if not files:
-            send_message(chat_id, "📭 Нет файлов для экспорта")
-            return
-        
-        send_message(chat_id, "📦 Создаю ZIP архив...")
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for name, content in files.items():
-                zf.writestr(name, content)
-        zip_buffer.seek(0)
-        
-        with open(f"project_{user_id}.zip", "wb") as f:
-            f.write(zip_buffer.getvalue())
-        send_file(chat_id, f"project_{user_id}.zip", "📦 Архив проекта")
-        os.remove(f"project_{user_id}.zip")
-    
-    # /web
-    elif text == "/web":
-        bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
-        send_message(chat_id, f"🎨 *Веб-редактор*\n\n🔗 {bot_url}/web_editor/{user_id}\n\nТам уже будет твой код!", parse_mode="Markdown")
-    
-    # /help
     elif text == "/help":
         send_message(chat_id,
             "📚 *Все команды бота*\n\n"
             "/start — начать работу\n"
             "/show — показать код\n"
             "/done — скачать файл\n"
-            "/reset — очистить код\n"
+            "/reset — очистить ВСЁ\n"
+            "/delete — удалить ПОСЛЕДНЮЮ часть\n"
+            "/undo — откатить последнее изменение\n"
             "/order — переставить функции\n"
             "/complexity — анализ сложности\n"
             "/bugs — поиск багов\n"
             "/validate — проверка кода\n"
-            "/new_project — создать проект\n"
-            "/files — список файлов\n"
-            "/switch_file — переключить файл\n"
-            "/export — экспорт ZIP\n"
-            "/web — веб-редактор\n"
-            "/help — это сообщение", parse_mode="Markdown")
+            "/help — это сообщение\n\n"
+            "💡 *Совет:*\n"
+            "• Отправляй код частями\n"
+            "• Если ошибся — используй /delete\n"
+            "• Хочешь вернуть назад — /undo", parse_mode="Markdown")
     
-    # Обработка кода (не команда)
+    # Обработка кода
     elif not text.startswith("/"):
         current = user_sessions[user_id]["code"]
-        send_message(chat_id, "🧠 AI анализирует и объединяет код...")
+        send_message(chat_id, "🧠 AI анализирует код...")
         
         if current:
-            prompt = f"""Объедини текущий код с новой частью. Верни ТОЛЬКО итоговый код, без объяснений.
+            prompt = f"""Объедини код. Верни ТОЛЬКО итоговый код, без объяснений.
 
 Текущий код:
 {current}
@@ -345,6 +310,7 @@ def process_message(message):
         ai_response = call_deepseek(prompt)
         
         if ai_response:
+            # Очистка от маркеров
             ai_response = ai_response.strip()
             if ai_response.startswith("```"):
                 lines = ai_response.split('\n')
@@ -353,20 +319,22 @@ def process_message(message):
                 if lines and lines[-1].strip() == "```":
                     lines = lines[:-1]
                 ai_response = '\n'.join(lines)
-            user_sessions[user_id]["code"] = ai_response
+            new_code = ai_response
         else:
             new_code = current + "\n\n" + text if current else text
-            user_sessions[user_id]["code"] = new_code
         
-        # Обновляем файл в проекте
-        current_file = user_sessions[user_id].get("current_file", "main.py")
-        if "project_files" in user_sessions[user_id]:
-            user_sessions[user_id]["project_files"][current_file] = user_sessions[user_id]["code"]
+        # Сохраняем в историю ПОЛНУЮ версию кода для отката
+        user_sessions[user_id]["history"].append({
+            "time": str(datetime.now()),
+            "part": text[:200],
+            "full_code": user_sessions[user_id]["code"]  # Сохраняем предыдущую версию
+        })
         
-        user_sessions[user_id]["history"].append({"time": str(datetime.now()), "part": text[:100]})
-        send_message(chat_id, f"✅ *Код обновлён!*\n📊 Размер: {len(user_sessions[user_id]['code'])} символов\n📁 Файл: `{current_file}`\n\n/show — посмотреть\n/done — скачать", parse_mode="Markdown")
+        user_sessions[user_id]["code"] = new_code
+        
+        send_message(chat_id, f"✅ *Код обновлён!*\n📊 Размер: {len(new_code)} символов\n📦 Частей: {len(user_sessions[user_id]['history'])}\n\n/show — посмотреть\n/done — скачать\n/delete — удалить последнюю часть", parse_mode="Markdown")
 
-# ==================== ПОЛЛИНГ ====================
+# ==================== ЗАПУСК ====================
 def run_bot():
     logger.info("🚀 Бот запущен!")
     last_update_id = 0
@@ -382,142 +350,5 @@ def run_bot():
             logger.error(f"Ошибка: {e}")
             time.sleep(5)
 
-# ==================== ВЕБ-РЕДАКТОР ====================
-WEB_HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>🤖 AI Code Editor</title>
-    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
-    <style>
-        body { margin: 0; padding: 0; background: #1e1e1e; font-family: monospace; }
-        #editor { height: 85vh; }
-        .toolbar { background: #2d2d2d; padding: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
-        button { padding: 8px 16px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 4px; }
-        button:hover { background: #1177bb; }
-        .status { background: #1e1e1e; color: #888; padding: 5px 10px; font-size: 12px; }
-    </style>
-</head>
-<body>
-<div class="toolbar">
-    <button onclick="saveCode()">💾 Сохранить</button>
-    <button onclick="downloadCode()">📥 Скачать</button>
-    <button onclick="analyzeComplexity()">📊 Сложность</button>
-    <button onclick="findBugs()">🐛 Баги</button>
-    <button onclick="reorder()">🔄 Порядок</button>
-</div>
-<div id="editor"></div>
-<div class="status" id="status">Готов к работе</div>
-<script>
-let editor;
-require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' } });
-require(['vs/editor/editor.main'], function() {
-    editor = monaco.editor.create(document.getElementById('editor'), {
-        value: {{ code | tojson }},
-        language: 'python',
-        theme: 'vs-dark',
-        fontSize: 14,
-        minimap: { enabled: true }
-    });
-});
-async function saveCode() {
-    const code = editor.getValue();
-    await fetch('/api/save_code', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({user_id: {{ user_id }}, code: code})
-    });
-    document.getElementById('status').innerText = '✅ Сохранено!';
-    setTimeout(() => document.getElementById('status').innerText = 'Готов к работе', 2000);
-}
-function downloadCode() {
-    const code = editor.getValue();
-    const blob = new Blob([code], {type: 'text/plain'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'code.py';
-    a.click();
-    URL.revokeObjectURL(a.href);
-}
-async function analyzeComplexity() {
-    const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: editor.getValue()})
-    });
-    const data = await res.json();
-    alert(data.report);
-}
-async function findBugs() {
-    const res = await fetch('/api/bugs', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: editor.getValue()})
-    });
-    const data = await res.json();
-    alert(data.report);
-}
-async function reorder() {
-    const res = await fetch('/api/reorder', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: editor.getValue()})
-    });
-    const data = await res.json();
-    editor.setValue(data.code);
-    document.getElementById('status').innerText = '🔄 Код переставлен!';
-    setTimeout(() => document.getElementById('status').innerText = 'Готов к работе', 2000);
-}
-</script>
-</body>
-</html>
-"""
-
-@app.route('/web_editor/<int:user_id>')
-def web_editor(user_id):
-    code = user_sessions.get(user_id, {}).get("code", "")
-    return render_template_string(WEB_HTML, user_id=user_id, code=code)
-
-@app.route('/api/save_code', methods=['POST'])
-def api_save_code():
-    data = request.json
-    user_id = data.get('user_id')
-    code = data.get('code', '')
-    if user_id in user_sessions:
-        user_sessions[user_id]["code"] = code
-        current_file = user_sessions[user_id].get("current_file", "main.py")
-        if "project_files" in user_sessions[user_id]:
-            user_sessions[user_id]["project_files"][current_file] = code
-        return jsonify({"success": True})
-    return jsonify({"success": False})
-
-@app.route('/api/analyze', methods=['POST'])
-def api_analyze():
-    code = request.json.get('code', '')
-    analysis = analyze_complexity(code)
-    report = f"📊 Строк кода: {analysis['code_lines']}, Функций: {analysis['functions']}, Сложность: {analysis['complexity']:.1f} ({analysis['rating']})"
-    return jsonify({"report": report})
-
-@app.route('/api/bugs', methods=['POST'])
-def api_bugs():
-    code = request.json.get('code', '')
-    bugs = find_bugs(code)
-    if not bugs:
-        return jsonify({"report": "✅ Багов не найдено!"})
-    report = "🐛 Баги:\n" + "\n".join([f"- {b['message']} [{b['severity']}]" for b in bugs])
-    return jsonify({"report": report})
-
-@app.route('/api/reorder', methods=['POST'])
-def api_reorder():
-    code = request.json.get('code', '')
-    return jsonify({"code": reorder_code(code)})
-
-@app.route('/')
-def health():
-    return "🤖 AI Code Assembler Bot is running!", 200
-
-# ==================== ЗАПУСК ====================
 if __name__ == "__main__":
-    bot_thread = Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    app.run(host='0.0.0.0', port=PORT)
+    run_bot()
