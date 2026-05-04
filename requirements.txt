@@ -1,0 +1,4 @@
+python-telegram-bot==20.7
+Flask==3.0.0
+openai==1.6.1
+PyGithub==2.1.1
