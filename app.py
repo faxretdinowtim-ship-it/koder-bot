@@ -132,20 +132,6 @@ def analyze_complexity(code):
     
     return f"📊 *Анализ сложности кода*\n\n• Строк кода: {code_lines}\n• Функций: {functions}\n• Классов: {classes}\n• Цикломатическая сложность: {complexity:.1f}\n• Оценка: {rating}"
 
-def run_code_safe(code):
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
-        f.write(code)
-        temp_file = f.name
-    try:
-        process = subprocess.run(["python3", temp_file], capture_output=True, text=True, timeout=5)
-        return {"success": process.returncode == 0, "output": process.stdout, "error": process.stderr}
-    except subprocess.TimeoutExpired:
-        return {"success": False, "output": "", "error": "Превышено время выполнения (5 сек)"}
-    except Exception as e:
-        return {"success": False, "output": "", "error": str(e)}
-    finally:
-        os.unlink(temp_file)
-
 def save_code_file(user_id, content):
     filename = f"code_{user_id}_bot.py"
     header = f"# 🤖 Создано AI Code Bot\n# Дата: {datetime.now()}\n\n"
@@ -159,7 +145,7 @@ def get_keyboard():
         "keyboard": [
             ["📝 Показать код", "💾 Скачать код"],
             ["🔧 ИСПРАВИТЬ", "🐛 Ошибки"],
-            ["🏃 Запустить", "📊 Анализ"],
+            ["📊 Анализ сложности", "🧩 СКЛЕИТЬ КОД"],
             ["🗑 Удалить последний", "📜 История"],
             ["🗑 Очистить всё", "❓ Помощь"]
         ],
@@ -185,8 +171,8 @@ def process_message(msg):
             "💾 /done — скачать код\n"
             "🔧 /fix — ИСПРАВИТЬ ошибки\n"
             "🐛 /bugs — найти ошибки\n"
-            "🏃 /run — выполнить код\n"
             "📊 /complexity — анализ сложности\n"
+            "🧩 /merge — СКЛЕИТЬ код из частей\n"
             "🗑 /undo — удалить последнюю часть\n"
             "📜 /history — история кода\n"
             "🗑 /reset — очистить всё\n\n"
@@ -201,12 +187,12 @@ def process_message(msg):
             "💾 /done — скачать код файлом\n"
             "🔧 /fix — автоматически исправить ошибки\n"
             "🐛 /bugs — найти все ошибки\n"
-            "🏃 /run — выполнить код в песочнице\n"
             "📊 /complexity — анализ сложности кода\n"
+            "🧩 /merge — СКЛЕИТЬ все части в один код\n"
             "🗑 /undo — удалить последнюю отправленную часть\n"
             "📜 /history — показать историю изменений\n"
             "🗑 /reset — очистить весь код\n\n"
-            "💡 *Совет:* Отправляй код частями — я склею их в один файл!",
+            "💡 *Совет:* Отправляй код частями — потом нажми СКЛЕИТЬ КОД!",
             parse_mode="Markdown")
         return
     
@@ -255,7 +241,7 @@ def process_message(msg):
         send_message(chat_id, "\n".join(bugs), parse_mode="Markdown")
         return
     
-    elif text == "/complexity" or text == "📊 Анализ":
+    elif text == "/complexity" or text == "📊 Анализ сложности":
         code = user_sessions[uid]["code"]
         if not code.strip():
             send_message(chat_id, "📭 Нет кода для анализа")
@@ -264,19 +250,26 @@ def process_message(msg):
         send_message(chat_id, analysis, parse_mode="Markdown")
         return
     
-    elif text == "/run" or text == "🏃 Запустить":
-        code = user_sessions[uid]["code"]
-        if not code.strip():
-            send_message(chat_id, "📭 Нет кода для запуска")
+    # НОВАЯ КОМАНДА: СКЛЕИТЬ КОД
+    elif text == "/merge" or text == "🧩 СКЛЕИТЬ КОД":
+        history = user_sessions[uid].get("history", [])
+        if not history:
+            send_message(chat_id, "📭 Нет частей для склеивания. Сначала отправь код частями!")
             return
-        send_message(chat_id, "🏃 Запускаю код...")
-        result = run_code_safe(code)
-        if result["success"]:
-            output = result["output"][:3000] if result["output"] else "(нет вывода)"
-            send_message(chat_id, f"✅ *Выполнение успешно!*\n\n```\n{output}\n```", parse_mode="Markdown")
-        else:
-            error = result["error"][:2000] if result["error"] else "Неизвестная ошибка"
-            send_message(chat_id, f"❌ *Ошибка выполнения:*\n```\n{error}\n```", parse_mode="Markdown")
+        
+        # Склеиваем все части
+        all_parts = [h["part"] for h in history]
+        merged_code = "\n\n".join(all_parts)
+        user_sessions[uid]["code"] = merged_code
+        
+        send_message(chat_id, 
+            f"✅ *Код успешно склеен!*\n"
+            f"📊 Всего символов: {len(merged_code)}\n"
+            f"📦 Склеено частей: {len(history)}\n\n"
+            f"📝 /show — посмотреть результат\n"
+            f"🔧 /fix — исправить ошибки\n"
+            f"💾 /done — скачать файл",
+            parse_mode="Markdown")
         return
     
     elif text == "/undo" or text == "🗑 Удалить последний":
@@ -306,7 +299,7 @@ def process_message(msg):
                 time_str = h.get('time', '')[:16]
                 preview = h.get('part', '')[:50].replace('\n', ' ')
                 msg += f"{i}. [{time_str}] `{preview}...`\n"
-            msg += f"\n📊 Всего сохранено: {len(history)} частей"
+            msg += f"\n📊 Всего сохранено: {len(history)} частей\n\n🧩 /merge — склеить все части в один код"
             send_message(chat_id, msg, parse_mode="Markdown")
         return
     
@@ -315,23 +308,22 @@ def process_message(msg):
         send_message(chat_id, "🧹 Код полностью очищен!", reply_markup=json.dumps(get_keyboard()))
         return
     
-    # Обработка обычного кода (склеивание частей) - без дублирования
-    elif not text.startswith("/") and not any(text.startswith(x) for x in ["📝", "💾", "🔧", "🐛", "📊", "🏃", "🗑", "📜", "❓"]):
+    # Обработка обычного кода (сохранение частей)
+    elif not text.startswith("/") and not any(text.startswith(x) for x in ["📝", "💾", "🔧", "🐛", "📊", "🧩", "🗑", "📜", "❓"]):
         history = user_sessions[uid].get("history", [])
         history.append({"time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "part": text})
         user_sessions[uid]["history"] = history
         
+        # Не склеиваем автоматически, только сохраняем части
         current = user_sessions[uid].get("code", "")
-        new_code = current + "\n\n" + text if current else text
-        user_sessions[uid]["code"] = new_code
+        user_sessions[uid]["code"] = current  # Оставляем как было
         
         send_message(chat_id, 
             f"✅ *Часть кода сохранена!*\n"
-            f"📊 Всего символов: {len(new_code)}\n"
             f"📦 Частей получено: {len(history)}\n\n"
-            f"📝 /show — посмотреть код\n"
-            f"🔧 /fix — исправить ошибки\n"
-            f"🏃 /run — выполнить код",
+            f"🧩 /merge — склеить все части\n"
+            f"📝 /show — посмотреть текущий код\n"
+            f"🗑 /undo — удалить последнюю часть",
             parse_mode="Markdown")
         return
 
