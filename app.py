@@ -184,7 +184,7 @@ pre {{ background: #f5f5f5; padding: 20px; overflow-x: auto; }}
 </body>
 </html>"""
 
-# ==================== КЛАВИАТУРА ====================
+# ==================== КЛАВИАТУРА (ВСЕ КНОПКИ) ====================
 def get_keyboard():
     return {
         "keyboard": [
@@ -266,6 +266,9 @@ def webhook():
                         "📄 /pdf — экспорт в PDF\n"
                         "🌐 /languages — другие языки\n"
                         "📁 /files — управление файлами\n"
+                        "➕ /add_file — добавить файл\n"
+                        "🗑 /undo — удалить последнюю часть\n"
+                        "📜 /history — история\n"
                         "🔧 /fix — исправить ошибки\n"
                         "🐛 /bugs — найти ошибки\n"
                         "📊 /complexity — анализ сложности\n"
@@ -420,6 +423,10 @@ def webhook():
                         file_list = "\n".join([f"• {name}" for name in files.keys()])
                         send_message(chat_id, f"📁 *Файлы:*\n{file_list}\n\nТекущий: {user_sessions[user_id].get('current_file', 'main.py')}")
                 
+                elif text == "/add_file" or text == "➕ ДОБАВИТЬ ФАЙЛ":
+                    send_message(chat_id, "📝 Введите имя файла для добавления (например: `app.py`, `index.html`):")
+                    user_sessions[user_id]["waiting_for"] = "add_file"
+                
                 elif text == "/undo" or text == "🗑 Удалить последний":
                     parts = user_sessions[user_id].get("parts", [])
                     if not parts:
@@ -448,6 +455,21 @@ def webhook():
                         send_message(chat_id, f"✅ Сгенерировано:\n```python\n{generated[:2000]}\n```")
                     else:
                         send_message(chat_id, "❌ Ошибка генерации")
+                
+                elif user_sessions[user_id].get("waiting_for") == "add_file":
+                    user_sessions[user_id]["waiting_for"] = None
+                    filename = text.strip()
+                    if "files" not in user_sessions[user_id]:
+                        user_sessions[user_id]["files"] = {}
+                    ext = filename.split('.')[-1] if '.' in filename else 'txt'
+                    templates = {
+                        'py': '# Python code\ndef main():\n    pass\n',
+                        'html': '<!DOCTYPE html>\n<html>\n<body>\n<h1>Hello</h1>\n</body>\n</html>',
+                        'css': '/* Styles */\nbody { font-family: Arial; }\n',
+                        'js': '// JavaScript\nconsole.log("Hello");\n'
+                    }
+                    user_sessions[user_id]["files"][filename] = templates.get(ext, f"# {filename}\n")
+                    send_message(chat_id, f"✅ Файл `{filename}` добавлен!")
                 
                 else:
                     send_message(chat_id, f"❓ Неизвестная команда. Используй /help")
