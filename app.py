@@ -23,9 +23,11 @@ user_sessions = {}
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 # ==================== ТЕЛЕГРАМ ФУНКЦИИ ====================
-def send_message(chat_id, text, parse_mode="Markdown"):
+def send_message(chat_id, text, parse_mode="Markdown", reply_markup=None):
     try:
         data = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+        if reply_markup:
+            data["reply_markup"] = reply_markup
         requests.post(f"{API_URL}/sendMessage", json=data, timeout=10)
     except Exception as e:
         logger.error(f"Ошибка: {e}")
@@ -151,7 +153,6 @@ def run_code_safe(code: str) -> dict:
     finally:
         os.unlink(temp_file)
 
-# ==================== АВТОИСПРАВЛЕНИЕ ====================
 def auto_fix_code(code: str) -> str:
     if not code.strip():
         return code
@@ -186,6 +187,35 @@ def auto_fix_code(code: str) -> str:
         return ai_response
     return code
 
+# ==================== КЛАВИАТУРА ДЛЯ ТЕЛЕГРАМ ====================
+def get_main_keyboard():
+    return {
+        "keyboard": [
+            ["📝 Показать код", "💾 Скачать код"],
+            ["🔍 Анализ сложности", "🐛 Поиск ошибок"],
+            ["✅ Проверить код", "🔄 Переставить функции"],
+            ["🏃 Запустить код", "🔧 Исправить ошибки"],
+            ["🌐 Веб-редактор", "🗑 Очистить всё"],
+            ["❓ Помощь"]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": False
+    }
+
+def get_files_keyboard(files):
+    keyboard = []
+    row = []
+    for i, name in enumerate(files.keys()):
+        row.append({"text": f"📄 {name[:20]}"})
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([{"text": "➕ Добавить файл"}, {"text": "📦 Экспорт ZIP"}])
+    keyboard.append([{"text": "🔙 Назад в главное меню"}])
+    return {"inline_keyboard": keyboard}
+
 # ==================== ОБРАБОТКА TELEGRAM ====================
 def process_message(message):
     chat_id = message["chat"]["id"]
@@ -193,51 +223,44 @@ def process_message(message):
     text = message.get("text", "")
     
     if user_id not in user_sessions:
-        user_sessions[user_id] = {"code": "", "history": []}
+        user_sessions[user_id] = {"code": "", "history": [], "project_files": {}, "current_file": "main.py"}
     
-    if text == "/start":
+    # Команды и кнопки
+    if text == "/start" or text == "🔙 Назад в главное меню":
         bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
         send_message(chat_id, 
             "🤖 *AI Code Assembler Bot*\n\n"
             "Привет! Я собираю код из частей с помощью DeepSeek AI.\n\n"
             f"🌐 *Веб-редактор:* {bot_url}/web/{user_id}\n\n"
-            "*Команды:*\n"
-            "/show — показать код\n"
-            "/done — скачать файл\n"
-            "/reset — очистить\n"
-            "/order — переставить функции\n"
-            "/complexity — анализ сложности\n"
-            "/bugs — поиск ошибок\n"
-            "/validate — проверка синтаксиса\n"
-            "/run — запустить код\n"
-            "/auto_fix — автоисправление ошибок\n"
-            "/web — веб-редактор\n"
-            "/help — помощь", parse_mode="Markdown")
+            "👇 *Нажми на кнопку ниже, чтобы начать:*",
+            parse_mode="Markdown",
+            reply_markup=json.dumps(get_main_keyboard()))
     
-    elif text == "/help":
+    elif text == "❓ Помощь" or text == "/help":
         send_message(chat_id, 
             "📚 *Команды бота:*\n\n"
-            "/start — запустить бота\n"
-            "/show — показать текущий код\n"
-            "/done — скачать код файлом\n"
-            "/reset — очистить весь код\n"
-            "/order — переставить функции в правильном порядке\n"
-            "/complexity — анализ сложности кода\n"
-            "/bugs — поиск ошибок и уязвимостей\n"
-            "/validate — проверка синтаксиса\n"
-            "/run — выполнить код в песочнице\n"
-            "/auto_fix — автоматически исправить ошибки\n"
-            "/web — открыть веб-редактор\n"
-            "/help — показать эту справку", parse_mode="Markdown")
+            "📝 Показать код — показать текущий код\n"
+            "💾 Скачать код — скачать код файлом\n"
+            "🔍 Анализ сложности — анализ сложности кода\n"
+            "🐛 Поиск ошибок — поиск багов\n"
+            "✅ Проверить код — проверка синтаксиса\n"
+            "🔄 Переставить функции — перестановка\n"
+            "🏃 Запустить код — выполнить в песочнице\n"
+            "🔧 Исправить ошибки — автоисправление\n"
+            "🌐 Веб-редактор — открыть веб-редактор\n"
+            "🗑 Очистить всё — очистить код\n"
+            "❓ Помощь — это сообщение",
+            parse_mode="Markdown",
+            reply_markup=json.dumps(get_main_keyboard()))
     
-    elif text == "/show":
+    elif text == "📝 Показать код" or text == "/show":
         code = user_sessions[user_id]["code"]
         if not code.strip():
             send_message(chat_id, "📭 Код пуст. Отправь мне часть кода!")
         else:
             send_message(chat_id, f"```python\n{code}\n```", parse_mode="Markdown")
     
-    elif text == "/done":
+    elif text == "💾 Скачать код" or text == "/done":
         code = user_sessions[user_id]["code"]
         if not code.strip():
             send_message(chat_id, "❌ Нет кода для сохранения")
@@ -248,12 +271,12 @@ def process_message(message):
         send_file(chat_id, filename, f"✅ Готовый код! {len(code)} символов")
         os.remove(filename)
     
-    elif text == "/reset":
+    elif text == "🗑 Очистить всё" or text == "/reset":
         user_sessions[user_id]["code"] = ""
         user_sessions[user_id]["history"] = []
-        send_message(chat_id, "🧹 Код очищен!")
+        send_message(chat_id, "🧹 Код очищен!", reply_markup=json.dumps(get_main_keyboard()))
     
-    elif text == "/order":
+    elif text == "🔄 Переставить функции" or text == "/order":
         code = user_sessions[user_id]["code"]
         if not code:
             send_message(chat_id, "📭 Нет кода")
@@ -261,28 +284,28 @@ def process_message(message):
             user_sessions[user_id]["code"] = reorder_code(code)
             send_message(chat_id, "🔄 Код переставлен! Импорты и функции в правильном порядке.")
     
-    elif text == "/complexity":
+    elif text == "🔍 Анализ сложности" or text == "/complexity":
         code = user_sessions[user_id]["code"]
         if not code:
             send_message(chat_id, "📭 Нет кода для анализа")
         else:
             send_message(chat_id, analyze_complexity(code), parse_mode="Markdown")
     
-    elif text == "/bugs":
+    elif text == "🐛 Поиск ошибок" or text == "/bugs":
         code = user_sessions[user_id]["code"]
         if not code:
             send_message(chat_id, "📭 Нет кода для проверки")
         else:
             send_message(chat_id, find_bugs(code), parse_mode="Markdown")
     
-    elif text == "/validate":
+    elif text == "✅ Проверить код" or text == "/validate":
         code = user_sessions[user_id]["code"]
         if not code:
             send_message(chat_id, "📭 Нет кода для проверки")
         else:
             send_message(chat_id, validate_code(code), parse_mode="Markdown")
     
-    elif text == "/run":
+    elif text == "🏃 Запустить код" or text == "/run":
         code = user_sessions[user_id]["code"]
         if not code.strip():
             send_message(chat_id, "📭 Нет кода для запуска")
@@ -296,7 +319,7 @@ def process_message(message):
             error = result["error"][:2000] if result["error"] else "Неизвестная ошибка"
             send_message(chat_id, f"❌ *Ошибка выполнения:*\n```\n{error}\n```", parse_mode="Markdown")
     
-    elif text == "/auto_fix":
+    elif text == "🔧 Исправить ошибки" or text == "/auto_fix":
         code = user_sessions[user_id]["code"]
         if not code.strip():
             send_message(chat_id, "📭 Нет кода для исправления")
@@ -307,15 +330,36 @@ def process_message(message):
         
         if fixed_code != code:
             user_sessions[user_id]["code"] = fixed_code
-            send_message(chat_id, "✅ *Код автоматически исправлен!*\n/show — посмотреть результат", parse_mode="Markdown")
+            send_message(chat_id, "✅ *Код автоматически исправлен!*\n📝 Показать код — посмотреть результат", parse_mode="Markdown")
         else:
-            send_message(chat_id, "❌ Ошибок не найдено или AI не смог их исправить.\n/bugs — проверить вручную", parse_mode="Markdown")
+            send_message(chat_id, "❌ Ошибок не найдено или AI не смог их исправить.\n🐛 Поиск ошибок — проверить вручную", parse_mode="Markdown")
     
-    elif text == "/web":
+    elif text == "🌐 Веб-редактор" or text == "/web":
         bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
-        send_message(chat_id, f"🎨 *Веб-редактор*\n\n🔗 {bot_url}/web/{user_id}", parse_mode="Markdown")
+        send_message(chat_id, f"🎨 *Веб-редактор*\n\n🔗 {bot_url}/web/{user_id}\n\nТам уже будет твой код!", parse_mode="Markdown")
     
-    elif not text.startswith("/"):
+    elif text == "➕ Добавить файл":
+        send_message(chat_id, "📝 Введите имя файла для добавления:\nНапример: `my_module.py`", parse_mode="Markdown")
+    
+    elif text == "📦 Экспорт ZIP":
+        files = user_sessions[user_id].get("project_files", {})
+        if not files:
+            send_message(chat_id, "📭 Нет файлов для экспорта.\nСначала добавьте файлы командой /add_file")
+        else:
+            import zipfile
+            from io import BytesIO
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for name, content in files.items():
+                    zf.writestr(name, content)
+            zip_buffer.seek(0)
+            with open(f"project_{user_id}.zip", "wb") as f:
+                f.write(zip_buffer.getvalue())
+            send_file(chat_id, f"project_{user_id}.zip", "📦 Архив проекта")
+            os.remove(f"project_{user_id}.zip")
+    
+    # Обработка обычного кода
+    elif not text.startswith("/") and not text.startswith("📝") and not text.startswith("💾") and not text.startswith("🔍") and not text.startswith("🐛") and not text.startswith("✅") and not text.startswith("🔄") and not text.startswith("🏃") and not text.startswith("🔧") and not text.startswith("🌐") and not text.startswith("🗑") and not text.startswith("❓") and not text.startswith("➕") and not text.startswith("📦") and not text.startswith("🔙"):
         current = user_sessions[user_id]["code"]
         send_message(chat_id, "🧠 AI анализирует код...")
         
@@ -336,7 +380,8 @@ def process_message(message):
         ai_response = call_deepseek(prompt)
         new_code = ai_response if ai_response else (current + "\n\n" + text if current else text)
         user_sessions[user_id]["code"] = new_code
-        send_message(chat_id, f"✅ *Код обновлён!*\n📊 Размер: {len(new_code)} символов\n\n/show — посмотреть\n/run — запустить", parse_mode="Markdown")
+        
+        send_message(chat_id, f"✅ *Код обновлён!*\n📊 Размер: {len(new_code)} символов\n\n📝 Показать код — посмотреть\n🏃 Запустить код — проверить работу", parse_mode="Markdown")
 
 # ==================== TELEGRAM БОТ ====================
 def run_telegram_bot():
