@@ -51,7 +51,7 @@ button.primary { background: linear-gradient(135deg, #667eea, #764ba2); }
     <button onclick="downloadCode()">📥 Скачать</button>
 </div>
 <div id="editor"></div>
-<div class="output" id="output">⚡ Готов к работе. Нажми "Загрузить из бота"</div>
+<div class="output" id="output">⚡ Готов к работе</div>
 <div class="status"><span id="status">⚡ Готов</span><span id="stats">📝 0</span></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.js"></script>
 <script>
@@ -147,16 +147,32 @@ function downloadCode() {
 </body>
 </html>'''
 
+# ==================== КЛАВИАТУРА ====================
+def get_main_keyboard():
+    return {
+        "keyboard": [
+            ["📝 Показать код", "💾 Скачать код"],
+            ["🔧 ИСПРАВИТЬ", "🐛 Ошибки"],
+            ["🏃 Запустить", "📊 Анализ"],
+            ["🌐 Веб-редактор", "🗑 Очистить всё"],
+            ["❓ Помощь"]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": False
+    }
+
 # ==================== ФУНКЦИИ ====================
-def send_message(chat_id, text, parse_mode=None):
+def send_message(chat_id, text, parse_mode=None, reply_markup=None):
     try:
         data = {"chat_id": chat_id, "text": text}
         if parse_mode:
             data["parse_mode"] = parse_mode
+        if reply_markup:
+            data["reply_markup"] = reply_markup
         requests.post(f"{API_URL}/sendMessage", json=data, timeout=10)
         logger.info(f"Сообщение отправлено в {chat_id}")
     except Exception as e:
-        logger.error(f"Ошибка отправки: {e}")
+        logger.error(f"Ошибка: {e}")
 
 def send_web_button(chat_id, user_id):
     bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
@@ -167,7 +183,6 @@ def send_web_button(chat_id, user_id):
             "text": "🌐 Нажми на кнопку, чтобы открыть редактор!",
             "reply_markup": json.dumps(rm)
         }, timeout=10)
-        logger.info(f"WebApp кнопка отправлена в {chat_id}")
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
@@ -194,24 +209,55 @@ def auto_fix_code(code):
     if '/ 0' in fixed or '/0' in fixed:
         fixed = fixed.replace('/ 0', '/ 1').replace('/0', '/1')
         fixes.append("деление на ноль")
+    if re.search(r'print\(["\'][^"\']*["\']$', fixed, re.MULTILINE):
+        fixed = re.sub(r'(print\(["\'][^"\']*["\'])$', r'\1)', fixed, flags=re.MULTILINE)
+        fixes.append("print()")
+    lines = fixed.split('\n')
+    seen = set()
+    new_lines = []
+    for line in lines:
+        if line.strip().startswith(('import ', 'from ')):
+            if line.strip() not in seen:
+                seen.add(line.strip())
+                new_lines.append(line)
+        else:
+            new_lines.append(line)
+    if len(new_lines) != len(lines):
+        fixes.append("дубликаты импортов")
+    fixed = '\n'.join(new_lines)
     return (fixed, f"✅ Исправлено: {', '.join(fixes)}") if fixes else (fixed, "✅ Код готов")
 
 def find_bugs(code):
     bugs = []
     if '/ 0' in code or '/0' in code:
-        bugs.append("❌ Деление на ноль")
+        bugs.append("❌ Деление на ноль [КРИТИЧЕСКАЯ]")
     if 'eval(' in code:
-        bugs.append("❌ eval()")
+        bugs.append("❌ Использование eval() [ВЫСОКАЯ]")
+    if re.search(r'except\s*:', code):
+        bugs.append("❌ Голый except [СРЕДНЯЯ]")
+    if re.search(r'password\s*=\s*[\'"]', code, re.IGNORECASE):
+        bugs.append("❌ Хардкод пароля [КРИТИЧЕСКАЯ]")
+    if 'print(' in code:
+        bugs.append("⚠️ Отладочный print() [НИЗКАЯ]")
     try:
         compile(code, '<string>', 'exec')
     except SyntaxError as e:
-        bugs.append(f"❌ {e.msg}")
-    return bugs if bugs else ["✅ Ошибок нет"]
+        bugs.append(f"❌ Синтаксис: {e.msg} [КРИТИЧЕСКАЯ]")
+    return bugs if bugs else ["✅ Ошибок не найдено!"]
 
 def analyze_complexity(code):
     lines = code.split('\n')
     code_lines = len([l for l in lines if l.strip() and not l.strip().startswith('#')])
-    return f"Строк кода: {code_lines} | Функций: {code.count('def ')}"
+    functions = code.count('def ')
+    branches = code.count('if ') + code.count('for ') + code.count('while ')
+    complexity = 1 + branches * 0.5
+    if complexity < 10:
+        rating = "Низкая (хорошо)"
+    elif complexity < 20:
+        rating = "Средняя (нормально)"
+    else:
+        rating = "Высокая (нужен рефакторинг)"
+    return f"📊 Анализ сложности:\n\n• Строк кода: {code_lines}\n• Функций: {functions}\n• Сложность: {complexity:.1f}\n• Оценка: {rating}"
 
 def run_code_safe(code):
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
@@ -220,8 +266,10 @@ def run_code_safe(code):
     try:
         process = subprocess.run(["python3", temp_file], capture_output=True, text=True, timeout=5)
         return {"success": process.returncode == 0, "output": process.stdout, "error": process.stderr}
-    except:
-        return {"success": False, "output": "", "error": "Timeout"}
+    except subprocess.TimeoutExpired:
+        return {"success": False, "output": "", "error": "Превышено время выполнения (5 сек)"}
+    except Exception as e:
+        return {"success": False, "output": "", "error": str(e)}
     finally:
         os.unlink(temp_file)
 
@@ -304,60 +352,141 @@ def process_message(msg):
     text = msg.get("text", "")
     
     if uid not in user_sessions:
-        user_sessions[uid] = {"code": ""}
+        user_sessions[uid] = {"code": "", "history": []}
     
-    logger.info(f"Получено сообщение от {uid}: {text[:50]}")
+    logger.info(f"Получено: {text[:50]} от {uid}")
     
+    # Обработка команд
     if text == "/start":
-        send_message(chat_id, "🤖 AI Code Bot\n\nПришли код - я исправлю!\n\n/web - открыть редактор\n/fix - исправить код\n/run - выполнить код\n/show - показать код")
+        send_message(chat_id, 
+            "🤖 *AI Code Bot*\n\n"
+            "Привет! Я помогаю писать и исправлять код!\n\n"
+            "*Основные команды:*\n"
+            "📝 /show — показать код\n"
+            "💾 /done — скачать код\n"
+            "🔧 /fix — исправить ошибки\n"
+            "🐛 /bugs — найти ошибки\n"
+            "🏃 /run — выполнить код\n"
+            "📊 /complexity — анализ сложности\n"
+            "🌐 /web — веб-редактор\n"
+            "🗑 /reset — очистить код\n"
+            "❓ /help — помощь\n\n"
+            "💡 *Совет:* Просто отправь мне часть кода!",
+            parse_mode="Markdown",
+            reply_markup=json.dumps(get_main_keyboard()))
     
-    elif text == "/web":
-        send_web_button(chat_id, uid)
+    elif text == "/help" or text == "❓ Помощь":
+        send_message(chat_id,
+            "📚 *Команды бота:*\n\n"
+            "📝 /show — показать текущий код\n"
+            "💾 /done — скачать код файлом\n"
+            "🔧 /fix — автоматически исправить ошибки\n"
+            "🐛 /bugs — найти все ошибки\n"
+            "🏃 /run — выполнить код в песочнице\n"
+            "📊 /complexity — анализ сложности кода\n"
+            "🔄 /order — переставить функции\n"
+            "🌐 /web — открыть веб-редактор\n"
+            "🗑 /reset — очистить весь код\n"
+            "❓ /help — эта справка",
+            parse_mode="Markdown",
+            reply_markup=json.dumps(get_main_keyboard()))
     
-    elif text == "/show":
-        code = user_sessions[uid]["code"]
-        send_message(chat_id, f"```python\n{code[:3000] if code else '# Пусто'}\n```", parse_mode="Markdown")
-    
-    elif text == "/fix":
+    elif text == "📝 Показать код" or text == "/show":
         code = user_sessions[uid]["code"]
         if not code.strip():
-            send_message(chat_id, "❌ Нет кода для исправления")
+            send_message(chat_id, "📭 Код пуст. Отправь мне часть кода!")
+        else:
+            send_message(chat_id, f"```python\n{code[:3500]}\n```", parse_mode="Markdown")
+    
+    elif text == "💾 Скачать код" or text == "/done":
+        code = user_sessions[uid]["code"]
+        if not code.strip():
+            send_message(chat_id, "❌ Нет кода для скачивания")
             return
-        fixed, report = auto_fix_code(code)
-        if fixed != code:
-            user_sessions[uid]["code"] = fixed
+        filename = f"code_{uid}.py"
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(code)
+        with open(filename, "rb") as f:
+            requests.post(f"{API_URL}/sendDocument", data={"chat_id": chat_id}, files={"document": f})
+        os.remove(filename)
+        send_message(chat_id, "✅ Файл отправлен!")
+    
+    elif text == "🔧 ИСПРАВИТЬ" or text == "/fix":
+        code = user_sessions[uid]["code"]
+        if not code.strip():
+            send_message(chat_id, "📭 Нет кода для исправления")
+            return
+        send_message(chat_id, "🔧 Исправляю код...")
+        fixed_code, report = auto_fix_code(code)
+        if fixed_code != code:
+            user_sessions[uid]["code"] = fixed_code
             send_message(chat_id, report)
         else:
             send_message(chat_id, "✅ Код уже в хорошем состоянии!")
     
-    elif text == "/bugs":
-        bugs = find_bugs(user_sessions[uid]["code"])
-        send_message(chat_id, "\n".join(bugs))
-    
-    elif text == "/run":
+    elif text == "🐛 Ошибки" or text == "/bugs":
         code = user_sessions[uid]["code"]
         if not code.strip():
-            send_message(chat_id, "❌ Нет кода для запуска")
+            send_message(chat_id, "📭 Нет кода для проверки")
             return
-        send_message(chat_id, "⏳ Выполнение...")
+        bugs = find_bugs(code)
+        send_message(chat_id, "🔍 *Результаты проверки:*\n\n" + "\n".join(bugs), parse_mode="Markdown")
+    
+    elif text == "📊 Анализ" or text == "/complexity":
+        code = user_sessions[uid]["code"]
+        if not code.strip():
+            send_message(chat_id, "📭 Нет кода для анализа")
+            return
+        analysis = analyze_complexity(code)
+        send_message(chat_id, analysis, parse_mode="Markdown")
+    
+    elif text == "🏃 Запустить" or text == "/run":
+        code = user_sessions[uid]["code"]
+        if not code.strip():
+            send_message(chat_id, "📭 Нет кода для запуска")
+            return
+        send_message(chat_id, "🏃 Запускаю код...")
         result = run_code_safe(code)
         if result["success"]:
-            send_message(chat_id, f"✅ Выполнено!\n```\n{result['output'][:1000]}\n```", parse_mode="Markdown")
+            output = result["output"][:3000] if result["output"] else "(нет вывода)"
+            send_message(chat_id, f"✅ *Выполнение успешно!*\n\n```\n{output}\n```", parse_mode="Markdown")
         else:
-            send_message(chat_id, f"❌ Ошибка:\n```\n{result['error'][:1000]}\n```", parse_mode="Markdown")
+            error = result["error"][:2000] if result["error"] else "Неизвестная ошибка"
+            send_message(chat_id, f"❌ *Ошибка выполнения:*\n```\n{error}\n```", parse_mode="Markdown")
     
-    elif text == "/reset":
-        user_sessions[uid] = {"code": ""}
-        send_message(chat_id, "🧹 Код очищен!")
+    elif text == "🔄 Порядок" or text == "/order":
+        code = user_sessions[uid]["code"]
+        if not code.strip():
+            send_message(chat_id, "📭 Нет кода для перестановки")
+            return
+        # Простая перестановка: импорты → функции → остальное
+        lines = code.split('\n')
+        imports = [l for l in lines if l.strip().startswith(('import ', 'from '))]
+        funcs = [l for l in lines if l.strip().startswith('def ')]
+        other = [l for l in lines if l not in imports and l not in funcs]
+        reordered = '\n'.join(imports + [''] + funcs + [''] + other)
+        user_sessions[uid]["code"] = reordered
+        send_message(chat_id, "🔄 Код переставлен! Импорты и функции в правильном порядке.")
     
-    elif text == "/help":
-        send_message(chat_id, "📚 Команды:\n/start - начать\n/web - веб-редактор\n/show - показать код\n/fix - исправить\n/run - выполнить\n/bugs - найти ошибки\n/reset - очистить")
+    elif text == "🌐 Веб-редактор" or text == "/web":
+        send_web_button(chat_id, uid)
     
-    else:
+    elif text == "🗑 Очистить всё" or text == "/reset":
+        user_sessions[uid] = {"code": "", "history": []}
+        send_message(chat_id, "🧹 Код полностью очищен!")
+    
+    # Обработка обычного кода (не команд)
+    elif not text.startswith("/") and not any(text.startswith(x) for x in ["📝", "💾", "🔧", "🐛", "📊", "🏃", "🔄", "🌐", "🗑", "❓"]):
         current = user_sessions[uid]["code"]
         new_code = current + "\n\n" + text if current else text
         user_sessions[uid]["code"] = new_code
-        send_message(chat_id, f"✅ Код сохранён! {len(new_code)} символов\n\n/show - посмотреть\n/fix - исправить")
+        
+        # Сохраняем историю
+        if "history" not in user_sessions[uid]:
+            user_sessions[uid]["history"] = []
+        user_sessions[uid]["history"].append({"time": str(datetime.now()), "part": text[:100]})
+        
+        send_message(chat_id, f"✅ *Часть кода сохранена!*\n📊 Всего символов: {len(new_code)}\n📦 Частей: {len(user_sessions[uid]['history'])}\n\n📝 /show — посмотреть код\n🔧 /fix — исправить ошибки", parse_mode="Markdown")
 
 # ==================== ЗАПУСК ====================
 def run_bot():
