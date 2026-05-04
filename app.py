@@ -51,7 +51,6 @@ def call_deepseek(prompt):
         logger.error(f"AI ошибка: {e}")
         return ""
 
-# ==================== ФУНКЦИИ ====================
 def send_message(chat_id, text, parse_mode="Markdown", reply_markup=None):
     try:
         payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
@@ -122,10 +121,11 @@ def generate_code(description):
 def smart_merge(parts):
     if not parts:
         return ""
+    parts_text = "\n\n--- ЧАСТЬ ---\n\n".join(parts)
     prompt = f"""Объедини эти части кода в один работающий файл. Верни ТОЛЬКО итоговый код.
 
 Части:
-{chr(10).join([f"--- ЧАСТЬ {i+1} ---\n{p}" for i, p in enumerate(parts)])}
+{parts_text}
 
 Итоговый код:"""
     return call_deepseek(prompt)
@@ -226,15 +226,7 @@ def set_webhook():
         logger.error(f"Ошибка webhook: {e}")
         return None
 
-# ==================== СПИСОК КОМАНД И КНОПОК (НЕ СОХРАНЯТЬ В КОД) ====================
-COMMANDS = [
-    "/start", "/show", "/done", "/fix", "/bugs", "/complexity", 
-    "/run", "/generate", "/reset", "/help", "/smart_merge",
-    "/convert", "/tests", "/review", "/comment", "/pdf",
-    "/languages", "/files", "/add_file", "/switch_file", "/export",
-    "/undo", "/history"
-]
-
+# ==================== СПИСОК КНОПОК (НЕ СОХРАНЯТЬ В КОД) ====================
 BUTTONS = [
     "📝 Показать код", "💾 Скачать код", "🔧 ИСПРАВИТЬ", "🐛 ОШИБКИ",
     "📊 АНАЛИЗ", "🏃 ЗАПУСТИТЬ", "✨ ГЕНЕРАЦИЯ", "🧠 УМНАЯ СКЛЕЙКА",
@@ -259,9 +251,9 @@ def webhook():
             if user_id not in user_sessions:
                 user_sessions[user_id] = {"code": "", "parts": [], "files": {"main.py": ""}, "current_file": "main.py", "history": []}
             
-            # Проверяем, является ли текст командой или кнопкой (НЕ СОХРАНЯЕМ В КОД)
+            # Если это команда или кнопка - НЕ СОХРАНЯЕМ В КОД
             if text.startswith("/") or text in BUTTONS:
-                # Обработка команд
+                
                 if text == "/start" or text == "❓ ПОМОЩЬ":
                     send_message(chat_id, 
                         "🤖 *AI Code Bot - ПОЛНАЯ ВЕРСИЯ*\n\n"
@@ -274,8 +266,6 @@ def webhook():
                         "📄 /pdf — экспорт в PDF\n"
                         "🌐 /languages — другие языки\n"
                         "📁 /files — управление файлами\n"
-                        "🗑 /undo — удалить последнюю часть\n"
-                        "📜 /history — история\n"
                         "🔧 /fix — исправить ошибки\n"
                         "🐛 /bugs — найти ошибки\n"
                         "📊 /complexity — анализ сложности\n"
@@ -373,7 +363,6 @@ def webhook():
                     user_sessions[user_id] = {"code": "", "parts": [], "files": {"main.py": ""}, "current_file": "main.py", "history": []}
                     send_message(chat_id, "🧹 Всё очищено!", reply_markup=json.dumps(get_keyboard()))
                 
-                # НОВЫЕ ФУНКЦИИ
                 elif text == "/tests" or text == "🧪 ТЕСТЫ":
                     code = user_sessions[user_id].get("code", "")
                     if not code.strip():
