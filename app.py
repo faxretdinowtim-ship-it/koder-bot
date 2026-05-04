@@ -1,18 +1,13 @@
 import os
-import re
 import json
 import logging
-import zipfile
-from io import BytesIO
+import time
 from threading import Thread
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template_string
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Updater, CommandHandler, MessageHandler,
-    Filters, CallbackContext, CallbackQueryHandler
-)
-from openai import OpenAI
+
+# Простая реализация Telegram API без библиотек
+import requests
 
 # ==================== КОНФИГУРАЦИЯ ====================
 TELEGRAM_TOKEN = "8663335250:AAG022Ubd_a00DTNk-JTx1bo4rhzHgw3myM"
@@ -24,277 +19,183 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MAX_MESSAGE_LENGTH = 4096
-
-# AI клиент DeepSeek
-ai_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
-AI_NAME = "DeepSeek Coder"
-
-user_sessions = {}
-
-# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
-def split_long_text(text: str, chunk_size: int = MAX_MESSAGE_LENGTH) -> list:
-    if len(text) <= chunk_size:
-        return [text]
-    chunks = []
-    pos = 0
-    while pos < len(text):
-        end = pos + chunk_size
-        if end >= len(text):
-            chunks.append(text[pos:])
-            break
-        split_at = text.rfind('\n', pos, end)
-        if split_at == -1:
-            split_at = text.rfind(' ', pos, end)
-        if split_at == -1 or split_at <= pos:
-            split_at = end
-        chunks.append(text[pos:split_at])
-        pos = split_at
-        while pos < len(text) and text[pos] in ' \n':
-            pos += 1
-    return chunks
-
-def send_long_message(bot, chat_id, text, parse_mode="Markdown"):
-    chunks = split_long_text(text)
-    for i, chunk in enumerate(chunks):
-        if len(chunks) > 1:
-            chunk = f"📄 *Часть {i+1}/{len(chunks)}*\n\n{chunk}"
-        bot.send_message(chat_id=chat_id, text=chunk, parse_mode=parse_mode)
-
-# ==================== AI СКЛЕЙКА ====================
-def ai_merge_code(current_code: str, new_part: str, instruction: str = "") -> dict:
-    prompt = f"""Ты эксперт по сборке кода. Объедини текущий код с новой частью.
-Текущий код:
-{current_code if current_code else "(пусто)"}
-
-Новая часть:
-{new_part}
-
-Инструкция: {instruction if instruction else "Объедини код"}
-
-Верни JSON: {{"code": "полный код", "changes": "что изменено"}}"""
-    
+# AI клиент (через requests)
+def call_deepseek(prompt: str) -> str:
+    """Вызов DeepSeek API"""
+    url = "https://api.deepseek.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "deepseek-coder",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 2000
+    }
     try:
-        response = ai_client.chat.completions.create(
-            model="deepseek-coder",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=2000
-        )
-        result_text = response.choices[0].message.content
-        result_text = result_text.strip('`').replace('json\n', '')
-        result = json.loads(result_text)
-        return {"code": result.get("code", new_part), "changes": result.get("changes", "Код обновлён")}
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        result = response.json()
+        return result["choices"][0]["message"]["content"]
     except Exception as e:
         logger.error(f"AI ошибка: {e}")
-        new_code = current_code + "\n\n" + new_part if current_code else new_part
-        return {"code": new_code, "changes": "Простое склеивание"}
+        return ""
 
-# ==================== ПЕРЕСТАНОВКА КОДА ====================
-def reorder_code(code: str) -> str:
-    lines = code.split('\n')
-    functions = []
-    imports = []
-    other = []
-    
-    for line in lines:
-        if line.strip().startswith(('import ', 'from ')):
-            imports.append(line)
-        elif line.strip().startswith(('def ', 'async def ')):
-            functions.append(line)
-        else:
-            other.append(line)
-    
-    result = []
-    if imports:
-        result.extend(sorted(set(imports)))
-        result.append('')
-    if functions:
-        result.extend(functions)
-        result.append('')
-    result.extend(other)
-    
-    return '\n'.join(result)
+# Хранилище пользователей
+user_sessions = {}
 
-# ==================== ПОИСК БАГОВ ====================
-def find_bugs(code: str) -> list:
-    bugs = []
-    patterns = [
-        (r'/\s*0\b', 'Деление на ноль', 'CRITICAL', 'Проверьте делитель'),
-        (r'eval\s*\(', 'Использование eval()', 'HIGH', 'Используйте ast.literal_eval()'),
-        (r'except\s*:', 'Голый except', 'MEDIUM', 'Укажите конкретное исключение'),
-        (r'password\s*=\s*[\'"]', 'Хардкод пароля', 'CRITICAL', 'Используйте переменные окружения'),
-    ]
-    
-    for pattern, msg, severity, fix in patterns:
-        if re.search(pattern, code):
-            bugs.append({"message": msg, "severity": severity, "fix": fix})
-    return bugs
+# Базовый URL для API
+API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-def generate_bugs_report(bugs: list) -> str:
-    if not bugs:
-        return "✅ **Багов не найдено!**"
-    report = "🐛 **Найденные проблемы:**\n\n"
-    for b in bugs[:5]:
-        report += f"• {b['message']} `[{b['severity']}]`\n  💡 {b['fix']}\n\n"
-    return report
-
-# ==================== АНАЛИЗ СЛОЖНОСТИ ====================
-def analyze_complexity(code: str) -> dict:
-    lines = code.split('\n')
-    code_lines = len([l for l in lines if l.strip() and not l.strip().startswith('#')])
-    functions = code.count('def ')
-    branches = code.count('if ') + code.count('for ') + code.count('while ')
-    complexity = 1 + branches * 0.5
-    
-    if complexity < 10:
-        rating = "🟢 Низкая"
-    elif complexity < 20:
-        rating = "🟡 Средняя"
-    else:
-        rating = "🔴 Высокая"
-    
-    return {"lines": len(lines), "code_lines": code_lines, "functions": functions, "complexity": complexity, "rating": rating}
-
-def format_complexity_report(analysis: dict) -> str:
-    return f"""📊 **Анализ сложности**
-
-• Строк кода: {analysis['code_lines']}
-• Функций: {analysis['functions']}
-• Цикломатическая: {analysis['complexity']:.1f}
-• Оценка: {analysis['rating']}"""
-
-# ==================== ВАЛИДАЦИЯ ====================
-def validate_and_fix(code: str) -> tuple:
-    errors = []
+# ==================== ФУНКЦИИ TELEGRAM ====================
+def send_message(chat_id, text, parse_mode="Markdown"):
+    """Отправка сообщения в Telegram"""
+    url = f"{API_URL}/sendMessage"
+    data = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": parse_mode
+    }
     try:
-        compile(code, '<string>', 'exec')
-    except SyntaxError as e:
-        errors.append(f"Синтаксическая ошибка: {e.msg}")
-    return code, errors
+        requests.post(url, json=data, timeout=10)
+    except Exception as e:
+        logger.error(f"Ошибка отправки: {e}")
 
-# ==================== КОМАНДЫ БОТА ====================
-def start(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if user_id not in user_sessions:
-        user_sessions[user_id] = {"code": "", "history": []}
-    
-    update.message.reply_text(
-        f"🤖 *AI Code Assembler Bot*\n\n"
-        f"Привет! Я собираю код из частей.\n\n"
-        f"🧠 *AI:* {AI_NAME}\n"
-        f"📦 *Размер кода:* {len(user_sessions[user_id]['code'])} символов\n\n"
-        f"*Команды:*\n"
-        f"/show — показать код\n"
-        f"/done — скачать файл\n"
-        f"/reset — очистить\n"
-        f"/complexity — анализ сложности\n"
-        f"/bugs — поиск багов\n"
-        f"/validate — проверить\n"
-        f"/order — переставить функции\n"
-        f"/web — веб-редактор\n\n"
-        f"📝 Просто отправь мне часть кода!",
-        parse_mode="Markdown"
-    )
-
-def show_code(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    code = user_sessions.get(user_id, {}).get("code", "")
-    if not code.strip():
-        update.message.reply_text("📭 Код пуст. Отправь мне часть кода!")
-        return
-    send_long_message(context.bot, update.effective_chat.id, f"```python\n{code}\n```", parse_mode="Markdown")
-
-def done(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    code = user_sessions.get(user_id, {}).get("code", "")
-    if not code.strip():
-        update.message.reply_text("❌ Нет кода для сохранения!")
-        return
-    
-    filename = f"code_{user_id}.py"
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(code)
+def send_file(chat_id, filename, caption=""):
+    """Отправка файла в Telegram"""
+    url = f"{API_URL}/sendDocument"
     with open(filename, "rb") as f:
-        update.message.reply_document(document=f, filename=filename, caption="✅ Готовый код!")
-    os.remove(filename)
+        files = {"document": f}
+        data = {"chat_id": chat_id, "caption": caption}
+        requests.post(url, data=data, files=files, timeout=30)
 
-def reset(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if user_id in user_sessions:
-        user_sessions[user_id]["code"] = ""
-    update.message.reply_text("🧹 Код очищен!")
+def get_updates(offset=None):
+    """Получение обновлений от Telegram"""
+    url = f"{API_URL}/getUpdates"
+    params = {"timeout": 30, "allowed_updates": ["message"]}
+    if offset:
+        params["offset"] = offset
+    try:
+        response = requests.get(url, params=params, timeout=35)
+        return response.json().get("result", [])
+    except Exception as e:
+        logger.error(f"Ошибка получения обновлений: {e}")
+        return []
 
-def order_command(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    code = user_sessions.get(user_id, {}).get("code", "")
-    if not code:
-        update.message.reply_text("📭 Нет кода")
-        return
-    user_sessions[user_id]["code"] = reorder_code(code)
-    update.message.reply_text("🔄 Код переставлен!")
-
-def complexity_command(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    code = user_sessions.get(user_id, {}).get("code", "")
-    if not code:
-        update.message.reply_text("📭 Нет кода")
-        return
-    analysis = analyze_complexity(code)
-    update.message.reply_text(format_complexity_report(analysis), parse_mode="Markdown")
-
-def bugs_command(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    code = user_sessions.get(user_id, {}).get("code", "")
-    if not code:
-        update.message.reply_text("📭 Нет кода")
-        return
-    bugs = find_bugs(code)
-    update.message.reply_text(generate_bugs_report(bugs), parse_mode="Markdown")
-
-def validate_command(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    code = user_sessions.get(user_id, {}).get("code", "")
-    if not code:
-        update.message.reply_text("📭 Нет кода")
-        return
-    fixed, errors = validate_and_fix(code)
-    if errors:
-        update.message.reply_text(f"⚠️ Найдены ошибки:\n" + "\n".join(errors))
-    else:
-        update.message.reply_text("✅ Код в идеальном состоянии!")
-
-def web_command(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
-    update.message.reply_text(f"🎨 *Веб-редактор*\n\n🔗 {bot_url}/web_editor/{user_id}", parse_mode="Markdown")
-
-def handle_message(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    user_message = update.message.text
+# ==================== ОБРАБОТКА СООБЩЕНИЙ ====================
+def process_message(message):
+    """Обработка входящего сообщения"""
+    chat_id = message["chat"]["id"]
+    user_id = message["from"]["id"]
+    text = message.get("text", "")
     
     if user_id not in user_sessions:
         user_sessions[user_id] = {"code": "", "history": []}
     
+    # Обработка команд
+    if text.startswith("/"):
+        if text == "/start":
+            send_message(chat_id, 
+                f"🤖 *AI Code Assembler Bot*\n\n"
+                f"Привет! Я собираю код из частей.\n\n"
+                f"*Команды:*\n"
+                f"/show — показать код\n"
+                f"/done — скачать файл\n"
+                f"/reset — очистить\n"
+                f"/web — веб-редактор\n\n"
+                f"📝 Просто отправь мне часть кода!",
+                parse_mode="Markdown")
+        
+        elif text == "/show":
+            code = user_sessions[user_id]["code"]
+            if not code.strip():
+                send_message(chat_id, "📭 Код пуст. Отправь мне часть кода!")
+            else:
+                send_message(chat_id, f"```python\n{code}\n```", parse_mode="Markdown")
+        
+        elif text == "/done":
+            code = user_sessions[user_id]["code"]
+            if not code.strip():
+                send_message(chat_id, "❌ Нет кода для сохранения!")
+                return
+            
+            filename = f"code_{user_id}.py"
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(code)
+            send_file(chat_id, filename, "✅ Готовый код!")
+            os.remove(filename)
+        
+        elif text == "/reset":
+            user_sessions[user_id]["code"] = ""
+            send_message(chat_id, "🧹 Код очищен!")
+        
+        elif text == "/web":
+            bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
+            send_message(chat_id, f"🎨 *Веб-редактор*\n\n🔗 {bot_url}/web_editor/{user_id}", parse_mode="Markdown")
+        
+        else:
+            send_message(chat_id, "Неизвестная команда. Используй /start")
+        return
+    
+    # Обработка кода (не команда)
     current = user_sessions[user_id]["code"]
     
-    update.message.reply_text(f"🧠 {AI_NAME} анализирует...")
+    send_message(chat_id, f"🧠 Анализирую и объединяю код...")
     
-    result = ai_merge_code(current, user_message, "")
-    final = result["code"]
-    final = reorder_code(final)
+    # AI склейка
+    prompt = f"""Ты эксперт по сборке кода. Объедини текущий код с новой частью.
+    Верни ТОЛЬКО итоговый код, без объяснений.
     
-    user_sessions[user_id]["code"] = final
-    user_sessions[user_id]["history"].append({"time": str(datetime.now()), "part": user_message[:100]})
+    Текущий код:
+    {current if current else "(пусто)"}
     
-    update.message.reply_text(
-        f"✅ *Код обновлён!*\n\n"
-        f"🔧 {result['changes']}\n"
-        f"📊 Размер: {len(final)} символов\n\n"
-        f"`/show` — посмотреть код\n"
-        f"`/done` — скачать",
-        parse_mode="Markdown"
-    )
+    Новая часть:
+    {text}
+    
+    Итоговый код:"""
+    
+    ai_response = call_deepseek(prompt)
+    
+    if ai_response:
+        # Очистка ответа от маркеров
+        ai_response = ai_response.strip()
+        if ai_response.startswith("```"):
+            ai_response = ai_response.split("```")[1]
+            if ai_response.startswith("python"):
+                ai_response = ai_response[6:]
+        user_sessions[user_id]["code"] = ai_response
+    else:
+        # Fallback: простое склеивание
+        new_code = current + "\n\n" + text if current else text
+        user_sessions[user_id]["code"] = new_code
+    
+    user_sessions[user_id]["history"].append({
+        "time": str(datetime.now()),
+        "part": text[:100]
+    })
+    
+    code_len = len(user_sessions[user_id]["code"])
+    send_message(chat_id, f"✅ *Код обновлён!*\n📊 Размер: {code_len} символов\n\n/show — посмотреть\n/done — скачать", parse_mode="Markdown")
+
+# ==================== ПОЛЛИНГ БОТА ====================
+def run_bot():
+    """Запуск polling бота"""
+    logger.info("🚀 Бот запущен и слушает сообщения...")
+    last_update_id = 0
+    
+    while True:
+        try:
+            updates = get_updates(offset=last_update_id + 1 if last_update_id else None)
+            
+            for update in updates:
+                last_update_id = update["update_id"]
+                if "message" in update:
+                    process_message(update["message"])
+            
+            time.sleep(1)
+        except Exception as e:
+            logger.error(f"Ошибка в цикле бота: {e}")
+            time.sleep(5)
 
 # ==================== ВЕБ-РЕДАКТОР ====================
 WEB_HTML = """
@@ -315,9 +216,7 @@ WEB_HTML = """
 <body>
 <div class="toolbar">
     <button onclick="saveCode()">💾 Сохранить</button>
-    <button onclick="analyzeComplexity()">📊 Сложность</button>
-    <button onclick="findBugs()">🐛 Баги</button>
-    <button onclick="reorderCode()">🔄 Порядок</button>
+    <button onclick="downloadCode()">📥 Скачать</button>
 </div>
 <div id="editor"></div>
 <div class="status" id="status">Готов к работе</div>
@@ -343,34 +242,14 @@ async function saveCode() {
     document.getElementById('status').innerText = '✅ Сохранено!';
     setTimeout(() => document.getElementById('status').innerText = 'Готов к работе', 2000);
 }
-async function analyzeComplexity() {
-    const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: editor.getValue()})
-    });
-    const data = await res.json();
-    alert(data.report);
-}
-async function findBugs() {
-    const res = await fetch('/api/bugs', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: editor.getValue()})
-    });
-    const data = await res.json();
-    alert(data.report);
-}
-async function reorderCode() {
-    const res = await fetch('/api/reorder', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: editor.getValue()})
-    });
-    const data = await res.json();
-    editor.setValue(data.code);
-    document.getElementById('status').innerText = '🔄 Код переставлен!';
-    setTimeout(() => document.getElementById('status').innerText = 'Готов к работе', 2000);
+function downloadCode() {
+    const code = editor.getValue();
+    const blob = new Blob([code], {type: 'text/plain'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'code.py';
+    a.click();
+    URL.revokeObjectURL(a.href);
 }
 </script>
 </body>
@@ -391,48 +270,15 @@ def api_save_code():
         user_sessions[user_id]["code"] = code
     return jsonify({"success": True})
 
-@app.route('/api/analyze', methods=['POST'])
-def api_analyze():
-    code = request.json.get('code', '')
-    analysis = analyze_complexity(code)
-    return jsonify({"report": format_complexity_report(analysis)})
-
-@app.route('/api/bugs', methods=['POST'])
-def api_bugs():
-    code = request.json.get('code', '')
-    bugs = find_bugs(code)
-    return jsonify({"report": generate_bugs_report(bugs)})
-
-@app.route('/api/reorder', methods=['POST'])
-def api_reorder():
-    code = request.json.get('code', '')
-    return jsonify({"code": reorder_code(code)})
-
 @app.route('/')
 def health():
     return "🤖 Bot is running!", 200
 
 # ==================== ЗАПУСК ====================
-def run_telegram_bot():
-    updater = Updater(token=TELEGRAM_TOKEN)
-    dp = updater.dispatcher
-    
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("show", show_code))
-    dp.add_handler(CommandHandler("done", done))
-    dp.add_handler(CommandHandler("reset", reset))
-    dp.add_handler(CommandHandler("order", order_command))
-    dp.add_handler(CommandHandler("complexity", complexity_command))
-    dp.add_handler(CommandHandler("bugs", bugs_command))
-    dp.add_handler(CommandHandler("validate", validate_command))
-    dp.add_handler(CommandHandler("web", web_command))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-    
-    logger.info(f"🚀 Бот запущен! AI: {AI_NAME}")
-    updater.start_polling()
-    updater.idle()
-
 if __name__ == "__main__":
-    bot_thread = Thread(target=run_telegram_bot, daemon=True)
+    # Запускаем бота в отдельном потоке
+    bot_thread = Thread(target=run_bot, daemon=True)
     bot_thread.start()
+    
+    # Запускаем Flask сервер
     app.run(host='0.0.0.0', port=PORT)
