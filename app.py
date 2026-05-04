@@ -26,12 +26,10 @@ logger = logging.getLogger(__name__)
 user_sessions = {}
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-# ==================== ТЕЛЕГРАМ ФУНКЦИИ ====================
-def send_message(chat_id, text, parse_mode="Markdown", reply_markup=None):
+# ==================== ФУНКЦИИ ====================
+def send_message(chat_id, text, parse_mode="Markdown"):
     try:
         data = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
-        if reply_markup:
-            data["reply_markup"] = reply_markup
         requests.post(f"{API_URL}/sendMessage", json=data, timeout=10)
     except Exception as e:
         logger.error(f"Ошибка: {e}")
@@ -53,7 +51,6 @@ def get_updates(offset=None):
     except:
         return []
 
-# ==================== AI ФУНКЦИЯ ====================
 def call_deepseek(prompt):
     try:
         url = "https://api.deepseek.com/v1/chat/completions"
@@ -83,7 +80,6 @@ def call_deepseek(prompt):
         logger.error(f"AI ошибка: {e}")
         return ""
 
-# ==================== ФУНКЦИИ АНАЛИЗА ====================
 def analyze_complexity(code):
     lines = code.split('\n')
     code_lines = len([l for l in lines if l.strip() and not l.strip().startswith('#')])
@@ -147,12 +143,7 @@ def run_code_safe(code: str) -> dict:
         f.write(code)
         temp_file = f.name
     try:
-        process = subprocess.run(
-            ["python3", temp_file],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        process = subprocess.run(["python3", temp_file], capture_output=True, text=True, timeout=5)
         return {"success": process.returncode == 0, "output": process.stdout, "error": process.stderr}
     except subprocess.TimeoutExpired:
         return {"success": False, "output": "", "error": "Превышено время выполнения (5 сек)"}
@@ -170,46 +161,21 @@ def process_message(message):
     if user_id not in user_sessions:
         user_sessions[user_id] = {"code": "", "history": []}
     
-    # Команды
     if text == "/start":
         bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
         send_message(chat_id, 
-            "🤖 *AI Code Assembler Bot*\n\n"
-            "Привет! Я собираю код из частей с помощью DeepSeek AI.\n\n"
+            "🤖 *AI Code Assembler Bot*\n\nПривет! Я собираю код из частей.\n\n"
             f"🌐 *Веб-редактор:* {bot_url}/web/{user_id}\n\n"
-            "*Команды:*\n"
-            "/show — показать код\n"
-            "/done — скачать файл\n"
-            "/reset — очистить\n"
-            "/order — переставить функции\n"
-            "/complexity — анализ сложности\n"
-            "/bugs — поиск багов\n"
-            "/validate — проверка кода\n"
-            "/run — запустить код\n"
-            "/web — веб-редактор\n"
-            "/help — справка", parse_mode="Markdown")
+            "*Команды:*\n/show — показать код\n/done — скачать\n/reset — очистить\n"
+            "/order — переставить\n/complexity — сложность\n/bugs — баги\n"
+            "/validate — проверка\n/run — запустить\n/web — веб-редактор\n/help — справка", parse_mode="Markdown")
     
     elif text == "/help":
-        send_message(chat_id,
-            "📚 *Все команды бота*\n\n"
-            "/start — начать работу\n"
-            "/show — показать код\n"
-            "/done — скачать файл\n"
-            "/reset — очистить код\n"
-            "/order — переставить функции\n"
-            "/complexity — анализ сложности\n"
-            "/bugs — поиск багов\n"
-            "/validate — проверка кода\n"
-            "/run — выполнить код в песочнице\n"
-            "/web — веб-редактор\n"
-            "/help — это сообщение", parse_mode="Markdown")
+        send_message(chat_id, "📚 Команды: /start, /show, /done, /reset, /order, /complexity, /bugs, /validate, /run, /web", parse_mode="Markdown")
     
     elif text == "/show":
         code = user_sessions[user_id]["code"]
-        if not code.strip():
-            send_message(chat_id, "📭 Код пуст")
-        else:
-            send_message(chat_id, f"```python\n{code}\n```", parse_mode="Markdown")
+        send_message(chat_id, f"```python\n{code if code else '# Код пуст'}\n```", parse_mode="Markdown")
     
     elif text == "/done":
         code = user_sessions[user_id]["code"]
@@ -217,102 +183,57 @@ def process_message(message):
             send_message(chat_id, "❌ Нет кода")
             return
         filename = f"code_{user_id}.py"
-        with open(filename, "w", encoding="utf-8") as f:
+        with open(filename, "w") as f:
             f.write(code)
-        send_file(chat_id, filename, f"✅ Готовый код! {len(code)} символов")
+        send_file(chat_id, filename, f"✅ Код! {len(code)} символов")
         os.remove(filename)
     
     elif text == "/reset":
         user_sessions[user_id]["code"] = ""
-        user_sessions[user_id]["history"] = []
         send_message(chat_id, "🧹 Код очищен!")
     
     elif text == "/order":
-        code = user_sessions[user_id]["code"]
-        if not code:
-            send_message(chat_id, "📭 Нет кода")
-        else:
-            user_sessions[user_id]["code"] = reorder_code(code)
-            send_message(chat_id, "🔄 Код переставлен!")
+        user_sessions[user_id]["code"] = reorder_code(user_sessions[user_id]["code"])
+        send_message(chat_id, "🔄 Код переставлен!")
     
     elif text == "/complexity":
-        code = user_sessions[user_id]["code"]
-        if not code:
-            send_message(chat_id, "📭 Нет кода")
-        else:
-            analysis = analyze_complexity(code)
-            send_message(chat_id, f"📊 *Анализ сложности*\n\n• Строк кода: {analysis['code_lines']}\n• Функций: {analysis['functions']}\n• Сложность: {analysis['complexity']:.1f}\n• Оценка: {analysis['rating']}", parse_mode="Markdown")
+        analysis = analyze_complexity(user_sessions[user_id]["code"])
+        send_message(chat_id, f"📊 Строк: {analysis['code_lines']}\nФункций: {analysis['functions']}\nСложность: {analysis['complexity']:.1f}\n{analysis['rating']}", parse_mode="Markdown")
     
     elif text == "/bugs":
-        code = user_sessions[user_id]["code"]
-        if not code:
-            send_message(chat_id, "📭 Нет кода")
-        else:
-            send_message(chat_id, find_bugs(code), parse_mode="Markdown")
+        send_message(chat_id, find_bugs(user_sessions[user_id]["code"]), parse_mode="Markdown")
     
     elif text == "/validate":
-        code = user_sessions[user_id]["code"]
-        if not code:
-            send_message(chat_id, "📭 Нет кода")
-        else:
-            send_message(chat_id, validate_code(code), parse_mode="Markdown")
+        send_message(chat_id, validate_code(user_sessions[user_id]["code"]), parse_mode="Markdown")
     
     elif text == "/run":
-        code = user_sessions[user_id]["code"]
-        if not code.strip():
-            send_message(chat_id, "📭 Нет кода для запуска")
-            return
-        send_message(chat_id, "🏃 Запуск кода в песочнице...")
-        result = run_code_safe(code)
+        result = run_code_safe(user_sessions[user_id]["code"])
         if result["success"]:
-            output = result["output"][:3000] if result["output"] else "(нет вывода)"
-            send_message(chat_id, f"✅ *Выполнение успешно!*\n\n```\n{output}\n```", parse_mode="Markdown")
+            send_message(chat_id, f"✅ Выполнено!\n```\n{result['output'][:2000]}\n```", parse_mode="Markdown")
         else:
-            error = result["error"][:2000] if result["error"] else "Неизвестная ошибка"
-            send_message(chat_id, f"❌ *Ошибка выполнения:*\n```\n{error}\n```", parse_mode="Markdown")
+            send_message(chat_id, f"❌ Ошибка:\n```\n{result['error'][:2000]}\n```", parse_mode="Markdown")
     
     elif text == "/web":
         bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
-        send_message(chat_id, f"🎨 *Веб-редактор*\n\n🔗 {bot_url}/web/{user_id}\n\nТам уже будет твой код!", parse_mode="Markdown")
+        send_message(chat_id, f"🎨 Веб-редактор: {bot_url}/web/{user_id}", parse_mode="Markdown")
     
-    # Обработка обычного кода
     elif not text.startswith("/"):
         current = user_sessions[user_id]["code"]
-        send_message(chat_id, "🧠 AI анализирует код...")
+        send_message(chat_id, "🧠 AI анализирует...")
         
         if current:
-            prompt = f"""Объедини код. Верни ТОЛЬКО итоговый код, без объяснений.
-
-Текущий код:
-{current}
-
-Новая часть:
-{text}
-
-Итоговый код:"""
+            prompt = f"Объедини код. Верни ТОЛЬКО итоговый код.\n\nТекущий код:\n{current}\n\nНовая часть:\n{text}\n\nИтоговый код:"
         else:
-            prompt = f"""Верни ТОЛЬКО этот код, без комментариев:
-{text}"""
+            prompt = f"Верни ТОЛЬКО этот код:\n{text}"
         
         ai_response = call_deepseek(prompt)
-        
-        if ai_response:
-            new_code = ai_response
-        else:
-            new_code = current + "\n\n" + text if current else text
-        
-        user_sessions[user_id]["history"].append({
-            "time": str(datetime.now()),
-            "part": text[:200],
-            "full_code": user_sessions[user_id]["code"]
-        })
+        new_code = ai_response if ai_response else (current + "\n\n" + text if current else text)
         user_sessions[user_id]["code"] = new_code
-        
-        send_message(chat_id, f"✅ *Код обновлён!*\n📊 Размер: {len(new_code)} символов\n\n/show — посмотреть\n/run — запустить", parse_mode="Markdown")
+        send_message(chat_id, f"✅ Код обновлён! {len(new_code)} символов\n/show — посмотреть", parse_mode="Markdown")
 
-# ==================== TELEGRAM БОТ (ПОЛЛИНГ) ====================
+# ==================== TELEGRAM ПОЛЛИНГ ====================
 def run_telegram_bot():
-    logger.info("🤖 Telegram бот запущен!")
+    logger.info("🤖 Бот запущен!")
     last_update_id = 0
     while True:
         try:
@@ -326,21 +247,19 @@ def run_telegram_bot():
             logger.error(f"Ошибка: {e}")
             time.sleep(5)
 
-# ==================== ВЕБ-РЕДАКТОР (HTML) ====================
-WEB_HTML = '''<!DOCTYPE html>
-<html lang="ru">
+# ==================== ВЕБ-РЕДАКТОР ====================
+WEB_HTML = '''
+<!DOCTYPE html>
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🤖 AI Code Editor</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #1e1e1e; font-family: monospace; }
+        body { margin: 0; padding: 0; background: #1e1e1e; }
         #editor { height: 85vh; }
-        .toolbar { background: #2d2d2d; padding: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
+        .toolbar { background: #2d2d2d; padding: 10px; display: flex; gap: 10px; }
         button { padding: 8px 16px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 4px; }
         button:hover { background: #1177bb; }
-        .status { background: #1e1e1e; color: #888; padding: 5px 10px; font-size: 12px; }
+        .status { background: #1e1e1e; color: #888; padding: 5px 10px; }
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/editor/editor.main.min.css">
 </head>
@@ -348,18 +267,13 @@ WEB_HTML = '''<!DOCTYPE html>
 <div class="toolbar">
     <button onclick="saveCode()">💾 Сохранить</button>
     <button onclick="runCode()">▶️ Запустить</button>
-    <button onclick="analyzeCode()">📊 Анализ</button>
     <button onclick="downloadCode()">📥 Скачать</button>
 </div>
 <div id="editor"></div>
-<div class="status" id="status">Готов к работе</div>
-
+<div class="status" id="status">Готов</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.js"></script>
 <script>
-let editor;
-const USER_ID = {{ user_id }};
-const API_URL = window.location.origin;
-
+let editor; const USER_ID = {{ user_id }}; const API_URL = window.location.origin;
 require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
 require(['vs/editor/editor.main'], function() {
     editor = monaco.editor.create(document.getElementById('editor'), {
@@ -367,47 +281,27 @@ require(['vs/editor/editor.main'], function() {
         language: 'python',
         theme: 'vs-dark',
         fontSize: 14,
-        minimap: { enabled: true },
         automaticLayout: true
     });
 });
-
 async function saveCode() {
-    const code = editor.getValue();
     await fetch(API_URL + '/api/save_code', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({user_id: USER_ID, code: code})
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({user_id: USER_ID, code: editor.getValue()})
     });
     document.getElementById('status').innerText = '✅ Сохранено!';
-    setTimeout(() => document.getElementById('status').innerText = 'Готов к работе', 2000);
+    setTimeout(() => document.getElementById('status').innerText = 'Готов', 2000);
 }
-
 async function runCode() {
-    const code = editor.getValue();
     const res = await fetch(API_URL + '/api/run_code', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: code})
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({code: editor.getValue()})
     });
     const data = await res.json();
-    alert(data.success ? data.output || '✅ Успешно!' : '❌ ' + data.error);
+    alert(data.success ? (data.output || '✅ Успешно') : '❌ ' + data.error);
 }
-
-async function analyzeCode() {
-    const code = editor.getValue();
-    const res = await fetch(API_URL + '/api/analyze', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: code})
-    });
-    const data = await res.json();
-    alert(data.report);
-}
-
 function downloadCode() {
-    const code = editor.getValue();
-    const blob = new Blob([code], {type: 'text/plain'});
+    const blob = new Blob([editor.getValue()], {type: 'text/plain'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'code.py';
@@ -435,16 +329,7 @@ def api_save_code():
 
 @app.route('/api/run_code', methods=['POST'])
 def api_run_code():
-    code = request.json.get('code', '')
-    result = run_code_safe(code)
-    return jsonify(result)
-
-@app.route('/api/analyze', methods=['POST'])
-def api_analyze():
-    code = request.json.get('code', '')
-    analysis = analyze_complexity(code)
-    report = f"📊 Строк кода: {analysis['code_lines']}\nФункций: {analysis['functions']}\nСложность: {analysis['complexity']:.1f}\nОценка: {analysis['rating']}"
-    return jsonify({"report": report})
+    return jsonify(run_code_safe(request.json.get('code', '')))
 
 @app.route('/')
 def health():
@@ -452,6 +337,5 @@ def health():
 
 # ==================== ЗАПУСК ====================
 if __name__ == "__main__":
-    bot_thread = Thread(target=run_telegram_bot, daemon=True)
-    bot_thread.start()
+    Thread(target=run_telegram_bot, daemon=True).start()
     app.run(host='0.0.0.0', port=PORT)
