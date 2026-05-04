@@ -2,15 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Копируем зависимости
+# Устанавливаем зависимости
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Копируем код
 COPY app.py .
 
-# Открываем порт
-EXPOSE 5000
-
-# Запускаем бота
+# Запускаем
 CMD ["python", "app.py"]
