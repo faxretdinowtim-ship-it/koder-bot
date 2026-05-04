@@ -18,9 +18,14 @@ from openai import OpenAI
 
 # ==================== КОНФИГУРАЦИЯ ====================
 TELEGRAM_TOKEN = "8663335250:AAG022Ubd_a00DTNk-JTx1bo4rhzHgw3myM"
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+
+# DeepSeek (бесплатно)
 USE_DEEPSEEK = True
 DEEPSEEK_API_KEY = "sk-46f721604f7c475a924c946e31858fb3"
+
+# Для OpenAI (если понадобится)
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 PORT = int(os.environ.get("PORT", 5000))
 
@@ -34,15 +39,22 @@ logger = logging.getLogger(__name__)
 # Telegram лимит
 MAX_MESSAGE_LENGTH = 4096
 
-# AI клиент
+# AI клиент (DeepSeek)
 if USE_DEEPSEEK and DEEPSEEK_API_KEY:
     ai_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
     AI_MODEL = "deepseek-coder"
     AI_NAME = "DeepSeek Coder"
-else:
+    logger.info("✅ Используется DeepSeek Coder (бесплатно)")
+elif OPENAI_API_KEY:
     ai_client = OpenAI(api_key=OPENAI_API_KEY)
     AI_MODEL = "gpt-3.5-turbo"
     AI_NAME = "GPT-3.5 Turbo"
+    logger.info("✅ Используется OpenAI")
+else:
+    logger.error("❌ Нет API ключа! Установи DEEPSEEK_API_KEY или OPENAI_API_KEY")
+    ai_client = None
+    AI_MODEL = None
+    AI_NAME = "None"
 
 # Хранилище пользователей
 user_sessions = {}
@@ -50,104 +62,26 @@ user_sessions = {}
 # Шаблоны проектов
 PROJECT_TEMPLATES = {
     "python": {
-        "main.py": '''#!/usr/bin/env python3
-"""Main entry point for the application"""
-
-def main():
-    print("Hello, World!")
-
-if __name__ == "__main__":
-    main()
-''',
+        "main.py": '#!/usr/bin/env python3\n"""Main entry point for the application"""\n\ndef main():\n    print("Hello, World!")\n\nif __name__ == "__main__":\n    main()\n',
         "README.md": "# Python Project\n\n## Description\nProject description here\n"
     },
     "flask": {
-        "app.py": '''from flask import Flask, render_template, request, jsonify
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return render_template('index.html')
-
-@app.route('/api/data', methods=['GET', 'POST'])
-def api():
-    if request.method == 'POST':
-        data = request.json
-        return jsonify({"received": data})
-    return jsonify({"message": "GET request"})
-
-if __name__ == '__main__':
-    app.run(debug=True)
-''',
-        "templates/index.html": '''<!DOCTYPE html>
-<html>
-<head>
-    <title>My Flask App</title>
-    <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-    <h1>Welcome to Flask!</h1>
-    <script src="/static/script.js"></script>
-</body>
-</html>''',
-        "static/style.css": "body {\n    font-family: Arial, sans-serif;\n    margin: 0;\n    padding: 20px;\n    background: #f0f0f0;\n}\n",
-        "static/script.js": "console.log('Hello from Flask!');\n",
+        "app.py": 'from flask import Flask, render_template, request, jsonify\n\napp = Flask(__name__)\n\n@app.route("/")\ndef home():\n    return render_template("index.html")\n\n@app.route("/api/data", methods=["GET", "POST"])\ndef api():\n    if request.method == "POST":\n        data = request.json\n        return jsonify({"received": data})\n    return jsonify({"message": "GET request"})\n\nif __name__ == "__main__":\n    app.run(debug=True)\n',
+        "templates/index.html": '<!DOCTYPE html>\n<html>\n<head>\n    <title>My Flask App</title>\n    <link rel="stylesheet" href="/static/style.css">\n</head>\n<body>\n    <h1>Welcome to Flask!</h1>\n    <script src="/static/script.js"></script>\n</body>\n</html>',
+        "static/style.css": 'body {\n    font-family: Arial, sans-serif;\n    margin: 0;\n    padding: 20px;\n    background: #f0f0f0;\n}\n',
+        "static/script.js": 'console.log("Hello from Flask!");\n',
         "requirements.txt": "flask\n",
         "README.md": "# Flask Application\n"
     },
     "html": {
-        "index.html": '''<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Website</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <h1>Welcome!</h1>
-    <p>This is a static website</p>
-    <script src="script.js"></script>
-</body>
-</html>''',
-        "style.css": "/* Styles */\nbody {\n    font-family: Arial, sans-serif;\n    margin: 0;\n    padding: 20px;\n}\n",
-        "script.js": "// JavaScript code\nconsole.log('Hello from JS!');\n",
+        "index.html": '<!DOCTYPE html>\n<html lang="ru">\n<head>\n    <meta charset="UTF-8">\n    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n    <title>My Website</title>\n    <link rel="stylesheet" href="style.css">\n</head>\n<body>\n    <h1>Welcome!</h1>\n    <p>This is a static website</p>\n    <script src="script.js"></script>\n</body>\n</html>',
+        "style.css": '/* Styles */\nbody {\n    font-family: Arial, sans-serif;\n    margin: 0;\n    padding: 20px;\n}\n',
+        "script.js": '// JavaScript code\nconsole.log("Hello from JS!");\n',
         "README.md": "# Static Website\n"
     },
     "fullstack": {
-        "backend/app.py": '''from flask import Flask, jsonify
-from flask_cors import CORS
-
-app = Flask(__name__)
-CORS(app)
-
-@app.route('/api/health')
-def health():
-    return jsonify({'status': 'ok'})
-
-@app.route('/api/users')
-def get_users():
-    return jsonify([{"id": 1, "name": "User 1"}])
-
-if __name__ == '__main__':
-    app.run(port=5000)
-''',
-        "frontend/index.html": '''<!DOCTYPE html>
-<html>
-<head>
-    <title>Fullstack App</title>
-</head>
-<body>
-    <h1>Fullstack Application</h1>
-    <div id="app"></div>
-    <script>
-        fetch('http://localhost:5000/api/users')
-            .then(r => r.json())
-            .then(data => console.log(data));
-    </script>
-</body>
-</html>''',
+        "backend/app.py": 'from flask import Flask, jsonify\nfrom flask_cors import CORS\n\napp = Flask(__name__)\nCORS(app)\n\n@app.route("/api/health")\ndef health():\n    return jsonify({"status": "ok"})\n\n@app.route("/api/users")\ndef get_users():\n    return jsonify([{"id": 1, "name": "User 1"}])\n\nif __name__ == "__main__":\n    app.run(port=5000)\n',
+        "frontend/index.html": '<!DOCTYPE html>\n<html>\n<head>\n    <title>Fullstack App</title>\n</head>\n<body>\n    <h1>Fullstack Application</h1>\n    <div id="app"></div>\n    <script>\n        fetch("http://localhost:5000/api/users")\n            .then(r => r.json())\n            .then(data => console.log(data));\n    </script>\n</body>\n</html>',
         "README.md": "# Fullstack Application\n"
     }
 }
@@ -198,6 +132,11 @@ def detect_file_type(filename: str, content: str) -> str:
 
 # ==================== AI СКЛЕЙКА ====================
 async def ai_merge_code(current_code: str, new_part: str, instruction: str = "") -> dict:
+    if not ai_client:
+        # Если AI не настроен, просто склеиваем
+        new_code = current_code + "\n\n" + new_part if current_code else new_part
+        return {"code": new_code, "changes": "Простое склеивание (AI не настроен)"}
+    
     prompt = f"""Ты эксперт по сборке кода. Объедини текущий код с новой частью.
 Текущий код:
 {current_code if current_code else "(пусто)"}
@@ -368,24 +307,6 @@ def generate_validation_report(errors: list, fixes: list) -> str:
         report += "🔧 **Исправлено:**\n" + "\n".join(f"• {f}" for f in fixes)
     return report
 
-# ==================== ГИТХАБ ИНТЕГРАЦИЯ ====================
-try:
-    from github import Github
-    import base64
-    github_client = Github(GITHUB_TOKEN) if GITHUB_TOKEN else None
-except ImportError:
-    github_client = None
-
-async def create_github_repo(repo_name: str):
-    if not github_client:
-        return {"success": False, "error": "GitHub не настроен"}
-    try:
-        user = github_client.get_user()
-        repo = user.create_repo(repo_name, private=False)
-        return {"success": True, "repo_url": repo.html_url}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
 # ==================== КОМАНДЫ БОТА ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -416,7 +337,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"/validate — проверить и исправить\n"
         f"/order — переставить функции\n"
         f"/export — экспортировать все файлы\n"
-        f"/gh_repo — создать GitHub репозиторий\n"
         f"/web — веб-редактор\n"
         f"/help — все команды\n\n"
         f"📝 *Как использовать:* просто отправь мне часть кода!",
@@ -439,7 +359,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*/switch_file* — переключить файл\n"
         "*/add_file* — добавить файл\n"
         "*/export* — скачать ZIP архив\n"
-        "*/gh_repo* — создать GitHub репозиторий\n"
         "*/web* — открыть веб-редактор\n"
         "*/help* — показать это сообщение",
         parse_mode="Markdown"
@@ -647,20 +566,49 @@ async def export_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption="📦 Архив проекта"
     )
 
-async def gh_repo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
-    if not args:
-        await update.message.reply_text("Использование: `/gh_repo my-repo`", parse_mode="Markdown")
-        return
+async def web_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot.onrender.com")
+    await update.message.reply_text(
+        f"🎨 *Веб-редактор*\n\n🔗 {bot_url}/web_editor/{user_id}",
+        parse_mode="Markdown"
+    )
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_message = update.message.text
     
-    repo_name = args[0]
-    await update.message.reply_text(f"📁 Создаю репозиторий `{repo_name}`...", parse_mode="Markdown")
+    if user_id not in user_sessions:
+        user_sessions[user_id] = {"code": "", "project_files": {}, "current_file": "main.py", "history": []}
     
-    result = await create_github_repo(repo_name)
-    if result["success"]:
-        await update.message.reply_text(f"✅ Репозиторий создан!\n🔗 {result['repo_url']}", parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"❌ Ошибка: {result['error']}")
+    instruction = ""
+    code_part = user_message
+    for kw in ["ДОБАВИТЬ:", "ИЗМЕНИТЬ:", "УДАЛИТЬ:"]:
+        if kw in user_message.upper():
+            parts = user_message.split(kw, 1)
+            instruction = kw
+            code_part = parts[1].strip()
+            break
+    
+    current = user_sessions[user_id]["code"]
+    status = await update.message.reply_text(f"🧠 {AI_NAME} анализирует...")
+    
+    result = await ai_merge_code(current, code_part, instruction)
+    final = result["code"]
+    final = reorder_code(final)
+    final, errors, fixes = validate_and_fix(final)
+    
+    user_sessions[user_id]["code"] = final
+    user_sessions[user_id]["history"].append({"time": datetime.now().isoformat(), "part": code_part[:100]})
+    
+    current_file = user_sessions[user_id].get("current_file", "main.py")
+    if "project_files" in user_sessions[user_id]:
+        user_sessions[user_id]["project_files"][current_file] = final
+    
+    await status.edit_text(
+        f"✅ *Код обновлён!*\n\n🔧 {result['changes']}\n📊 Размер: {len(final)} символов\n📁 Файл: `{current_file}`\n\n/show — посмотреть",
+        parse_mode="Markdown"
+    )
 
 # ==================== ВЕБ-РЕДАКТОР ====================
 WEB_HTML = """
@@ -789,50 +737,6 @@ def api_reorder():
     reordered = reorder_code(code)
     return jsonify({"code": reordered})
 
-async def web_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot.onrender.com")
-    await update.message.reply_text(
-        f"🎨 *Веб-редактор*\n\n🔗 {bot_url}/web_editor/{user_id}",
-        parse_mode="Markdown"
-    )
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_message = update.message.text
-    
-    if user_id not in user_sessions:
-        user_sessions[user_id] = {"code": "", "project_files": {}, "current_file": "main.py", "history": []}
-    
-    instruction = ""
-    code_part = user_message
-    for kw in ["ДОБАВИТЬ:", "ИЗМЕНИТЬ:", "УДАЛИТЬ:"]:
-        if kw in user_message.upper():
-            parts = user_message.split(kw, 1)
-            instruction = kw
-            code_part = parts[1].strip()
-            break
-    
-    current = user_sessions[user_id]["code"]
-    status = await update.message.reply_text(f"🧠 {AI_NAME} анализирует...")
-    
-    result = await ai_merge_code(current, code_part, instruction)
-    final = result["code"]
-    final = reorder_code(final)
-    final, errors, fixes = validate_and_fix(final)
-    
-    user_sessions[user_id]["code"] = final
-    user_sessions[user_id]["history"].append({"time": datetime.now().isoformat(), "part": code_part[:100]})
-    
-    current_file = user_sessions[user_id].get("current_file", "main.py")
-    if "project_files" in user_sessions[user_id]:
-        user_sessions[user_id]["project_files"][current_file] = final
-    
-    await status.edit_text(
-        f"✅ *Код обновлён!*\n\n🔧 {result['changes']}\n📊 Размер: {len(final)} символов\n📁 Файл: `{current_file}`\n\n/show — посмотреть",
-        parse_mode="Markdown"
-    )
-
 @app.route('/')
 def health():
     return "🤖 Bot is running!", 200
@@ -840,8 +744,11 @@ def health():
 # ==================== ЗАПУСК ====================
 def run_telegram_bot():
     if not TELEGRAM_TOKEN:
-        logger.error("TELEGRAM_TOKEN не задан!")
+        logger.error("❌ TELEGRAM_TOKEN не задан!")
         return
+    
+    if not ai_client:
+        logger.warning("⚠️ AI не настроен, бот будет работать без AI склейки")
     
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
@@ -859,7 +766,6 @@ def run_telegram_bot():
     application.add_handler(CommandHandler("switch_file", switch_file))
     application.add_handler(CommandHandler("add_file", add_file))
     application.add_handler(CommandHandler("export", export_all))
-    application.add_handler(CommandHandler("gh_repo", gh_repo_command))
     application.add_handler(CommandHandler("web", web_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
