@@ -50,11 +50,16 @@ def call_deepseek(prompt):
         logger.error(f"AI ошибка: {e}")
         return ""
 
-def send_message(chat_id, text, parse_mode="Markdown"):
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ send_message (добавлен reply_markup)
+def send_message(chat_id, text, parse_mode="Markdown", reply_markup=None):
     try:
-        requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": parse_mode}, timeout=10)
+        payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        requests.post(f"{API_URL}/sendMessage", json=payload, timeout=10)
+        logger.info(f"Сообщение отправлено в {chat_id}")
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(f"Ошибка отправки: {e}")
 
 def send_document(chat_id, filename, caption=""):
     try:
