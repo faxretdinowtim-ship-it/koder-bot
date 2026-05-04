@@ -7,7 +7,7 @@ import tempfile
 import subprocess
 import threading
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, render_template_string
 import requests
 
 # ==================== КОНФИГУРАЦИЯ ====================
@@ -16,49 +16,69 @@ DEEPSEEK_API_KEY = "sk-46f721604f7c475a924c946e31858fb3"
 PORT = int(os.environ.get("PORT", 5000))
 
 app = Flask(__name__)
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 user_sessions = {}
-processed_update_ids = set()
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+processed_ids = set()
 
-# ==================== ШАБЛОН HTML СТРАНИЦЫ ДЛЯ ЗАПУСКА КОДА ====================
-CODE_RUNNER_HTML = '''
-<!DOCTYPE html>
+# ==================== HTML5 ИГРА ====================
+GAME_HTML = '''<!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>🚀 Выполнение кода</title>
+    <title>🎮 Кликер Игра</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #1e1e1e; font-family: 'Courier New', monospace; padding: 20px; }
-        .container { max-width: 100%; margin: 0 auto; }
-        .code { background: #2d2d2d; padding: 15px; border-radius: 10px; overflow-x: auto; color: #d4d4d4; font-size: 14px; white-space: pre-wrap; margin-bottom: 20px; }
-        .output { background: #0a0a0a; padding: 15px; border-radius: 10px; color: #4ec9b0; font-size: 14px; white-space: pre-wrap; font-family: monospace; }
-        .title { color: #569cd6; margin-bottom: 15px; font-size: 20px; }
-        .success { color: #4ec9b0; border-left: 3px solid #4ec9b0; padding-left: 15px; }
-        .error { color: #f48771; border-left: 3px solid #f48771; padding-left: 15px; }
-        .info { color: #9cdcfe; font-size: 12px; margin-top: 10px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+        body { background: linear-gradient(135deg, #1a1a2e, #16213e); min-height: 100vh; display: flex; justify-content: center; align-items: center; font-family: monospace; padding: 20px; }
+        .game-container { background: rgba(0,0,0,0.5); backdrop-filter: blur(10px); border-radius: 40px; padding: 25px; text-align: center; max-width: 400px; width: 100%; }
+        h1 { font-size: 28px; background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .score { font-size: 56px; font-weight: bold; color: #ffd700; margin: 20px 0; }
+        .click-btn { width: 200px; height: 200px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); border: none; cursor: pointer; font-size: 70px; margin: 20px auto; display: block; }
+        .click-btn:active { transform: scale(0.95); }
+        .upgrade-btn { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 16px; padding: 12px; margin: 10px 0; width: 100%; cursor: pointer; color: white; display: flex; justify-content: space-between; }
+        .upgrade-cost { color: #ffd700; font-weight: bold; }
+        .stats { margin-top: 20px; padding: 15px; background: rgba(0,0,0,0.3); border-radius: 20px; display: flex; justify-content: space-around; }
+        .stat-value { font-size: 20px; font-weight: bold; color: #ffd700; }
     </style>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
-    <div class="container">
-        <div class="title">🚀 Результат выполнения кода</div>
-        <div class="code">{{ code }}</div>
-        <div class="output {{ 'success' if success else 'error' }}">
-            <strong>{{ '✅ ВЫПОЛНЕНИЕ УСПЕШНО' if success else '❌ ОШИБКА ВЫПОЛНЕНИЯ' }}</strong>
-            <pre style="margin-top: 10px; white-space: pre-wrap;">{{ output }}</pre>
-        </div>
-        <div class="info">💡 Этот результат получен из кода, который ты отправил боту</div>
+    <div class="game-container">
+        <h1>🎮 КЛИКЕР</h1>
+        <div class="score" id="score">0</div>
+        <button class="click-btn" id="clickBtn">💰</button>
+        <button class="upgrade-btn" id="autoClicker"><span>🤖 Автокликер</span><span class="upgrade-cost" id="autoCost">50</span></button>
+        <button class="upgrade-btn" id="doubleClick"><span>⚡ Двойной клик</span><span class="upgrade-cost" id="doubleCost">100</span></button>
+        <button class="upgrade-btn" id="bonusClick"><span>🎁 Бонус</span><span class="upgrade-cost" id="bonusCost">200</span></button>
+        <div class="stats"><div>🤖 <span id="autoCount">0</span></div><div>⚡ <span id="multiplier">1x</span></div><div>💪 <span id="clickPower">1</span></div></div>
     </div>
+    <script>
+        let tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
+        let score = 0, auto = 0, mult = 1, power = 1, autoCost = 50, doubleCost = 100, bonusCost = 200, intervals = [];
+        function updateUI() {
+            document.getElementById('score').innerText = Math.floor(score);
+            document.getElementById('autoCount').innerText = auto;
+            document.getElementById('multiplier').innerText = mult + 'x';
+            document.getElementById('clickPower').innerText = power;
+            document.getElementById('autoCost').innerText = autoCost;
+            document.getElementById('doubleCost').innerText = doubleCost;
+            document.getElementById('bonusCost').innerText = bonusCost;
+        }
+        function save() { if (tg?.initDataUnsafe?.user) fetch('/api/game_save', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ user_id: tg.initDataUnsafe.user.id, score, autoClickers: auto, multiplier: mult, clickPower: power, autoCost, doubleCost, bonusCost }) }); }
+        function load() { if (tg?.initDataUnsafe?.user) fetch(`/api/game_load?user_id=${tg.initDataUnsafe.user.id}`).then(r=>r.json()).then(d=>{ if(d.score!==undefined){ score=d.score; auto=d.autoClickers||0; mult=d.multiplier||1; power=d.clickPower||1; autoCost=d.autoCost||50; doubleCost=d.doubleCost||100; bonusCost=d.bonusCost||200; updateUI(); } }); }
+        document.getElementById('clickBtn').onclick = () => { score += power; updateUI(); };
+        document.getElementById('autoClicker').onclick = () => { if(score>=autoCost){ score-=autoCost; auto++; autoCost=Math.floor(autoCost*1.5); updateUI(); intervals.push(setInterval(()=>{ score+=mult; updateUI(); },1000)); } };
+        document.getElementById('doubleClick').onclick = () => { if(score>=doubleCost){ score-=doubleCost; mult*=2; power=mult; doubleCost=Math.floor(doubleCost*2); updateUI(); } };
+        document.getElementById('bonusClick').onclick = () => { if(score>=bonusCost){ score-=bonusCost; power+=5; bonusCost=Math.floor(bonusCost*1.8); updateUI(); } };
+        window.onbeforeunload = () => { save(); intervals.forEach(i=>clearInterval(i)); };
+        load(); updateUI();
+    </script>
 </body>
-</html>
-'''
+</html>'''
 
-# ==================== ФУНКЦИИ ====================
+# ==================== ФУНКЦИИ БОТА ====================
 def send_message(chat_id, text, parse_mode=None, reply_markup=None):
     try:
         data = {"chat_id": chat_id, "text": text}
@@ -70,38 +90,19 @@ def send_message(chat_id, text, parse_mode=None, reply_markup=None):
     except:
         pass
 
-def send_webapp_button(chat_id, text, webapp_url):
-    reply_markup = {"inline_keyboard": [[{"text": text, "web_app": {"url": webapp_url}}]]}
-    send_message(chat_id, "🎮 Нажми на кнопку, чтобы открыть результат!", reply_markup=json.dumps(reply_markup))
+def send_webapp_button(chat_id, text, url):
+    rm = {"inline_keyboard": [[{"text": text, "web_app": {"url": url}}]]}
+    send_message(chat_id, "🎮 Нажми на кнопку!", reply_markup=json.dumps(rm))
 
 def get_updates(offset=None):
     params = {"timeout": 30}
     if offset:
         params["offset"] = offset
     try:
-        response = requests.get(f"{API_URL}/getUpdates", params=params, timeout=35)
-        return response.json().get("result", [])
+        r = requests.get(f"{API_URL}/getUpdates", params=params, timeout=35)
+        return r.json().get("result", [])
     except:
         return []
-
-def run_code_safe(code):
-    """Безопасный запуск Python кода"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
-        f.write(code)
-        temp_file = f.name
-    try:
-        process = subprocess.run(["python3", temp_file], capture_output=True, text=True, timeout=5)
-        return {
-            "success": process.returncode == 0,
-            "output": process.stdout if process.stdout else process.stderr,
-            "error": process.stderr if not process.stdout else ""
-        }
-    except subprocess.TimeoutExpired:
-        return {"success": False, "output": "", "error": "Превышено время выполнения (5 сек)"}
-    except Exception as e:
-        return {"success": False, "output": "", "error": str(e)}
-    finally:
-        os.unlink(temp_file)
 
 def auto_fix_code(code):
     if not code.strip():
@@ -114,159 +115,177 @@ def auto_fix_code(code):
     if '/ 0' in fixed or '/0' in fixed:
         fixed = fixed.replace('/ 0', '/ 1').replace('/0', '/1')
         fixes.append("деление на ноль")
-    if re.search(r'print\(["\'][^"\']*["\']$', fixed, re.MULTILINE):
-        fixed = re.sub(r'(print\(["\'][^"\']*["\'])$', r'\1)', fixed, flags=re.MULTILINE)
-        fixes.append("print()")
-    return (fixed, f"✅ Исправлено: {', '.join(fixes)}") if fixes else (fixed, "✅ Код уже в хорошем состоянии")
+    return (fixed, f"✅ Исправлено: {', '.join(fixes)}") if fixes else (fixed, "✅ Код готов")
 
 def find_bugs(code):
     bugs = []
     if '/ 0' in code or '/0' in code:
         bugs.append("❌ Деление на ноль")
     if 'eval(' in code:
-        bugs.append("❌ Использование eval()")
+        bugs.append("❌ eval()")
     try:
         compile(code, '<string>', 'exec')
     except SyntaxError as e:
-        bugs.append(f"❌ Синтаксис: {e.msg}")
-    return bugs if bugs else ["✅ Ошибок не найдено!"]
+        bugs.append(f"❌ {e.msg}")
+    return bugs if bugs else ["✅ Ошибок нет"]
+
+def analyze_complexity(code):
+    lines = [l for l in code.split('\n') if l.strip() and not l.strip().startswith('#')]
+    return f"📊 Строк: {len(lines)}\nФункций: {code.count('def ')}\nВетвлений: {code.count('if ')}"
+
+def reorder_code(code):
+    lines = code.split('\n')
+    imports = [l for l in lines if l.strip().startswith(('import', 'from'))]
+    funcs = [l for l in lines if l.strip().startswith('def')]
+    other = [l for l in lines if l not in imports and l not in funcs]
+    return '\n'.join(imports + [''] + funcs + [''] + other)
 
 # ==================== FLASK МАРШРУТЫ ====================
 @app.route('/')
-def health():
-    return "🚀 Bot is running!", 200
+def index():
+    return "Bot is running!", 200
 
-@app.route('/run/<int:user_id>')
-def run_code_page(user_id):
-    """Страница с результатом выполнения кода пользователя"""
-    code = user_sessions.get(user_id, {}).get("code", "")
-    if not code:
-        return render_template_string(CODE_RUNNER_HTML, code="# Код пуст", output="Нет кода для выполнения", success=False)
-    
-    result = run_code_safe(code)
-    return render_template_string(CODE_RUNNER_HTML, 
-                                  code=code[:2000],
-                                  output=result["output"][:5000] if result["output"] else result["error"][:5000],
-                                  success=result["success"])
+@app.route('/game')
+def game():
+    return render_template_string(GAME_HTML)
 
-# ==================== ОБРАБОТКА TELEGRAM ====================
-def process_message(message):
-    chat_id = message["chat"]["id"]
-    user_id = message["from"]["id"]
-    text = message.get("text", "")
+@app.route('/api/game_save', methods=['POST'])
+def game_save():
+    data = request.json
+    uid = data.get('user_id')
+    if uid:
+        with open(f'save_{uid}.json', 'w') as f:
+            json.dump(data, f)
+    return {"ok": True}
+
+@app.route('/api/game_load', methods=['GET'])
+def game_load():
+    uid = request.args.get('user_id')
+    if uid and os.path.exists(f'save_{uid}.json'):
+        with open(f'save_{uid}.json') as f:
+            return json.load(f)
+    return {}
+
+# ==================== КЛАВИАТУРА ====================
+def get_keyboard():
+    return {
+        "keyboard": [
+            ["📝 Показать код", "💾 Скачать код"],
+            ["🔧 ИСПРАВИТЬ", "🐛 Ошибки"],
+            ["📊 Анализ", "🔄 Порядок"],
+            ["🗑 Удалить последний", "✅ Проверить"],
+            ["🎮 ИГРА", "🗑 Очистить всё"]
+        ],
+        "resize_keyboard": True
+    }
+
+# ==================== ОБРАБОТКА ====================
+def process_message(msg):
+    chat_id = msg["chat"]["id"]
+    uid = msg["from"]["id"]
+    text = msg.get("text", "")
     
-    if user_id not in user_sessions:
-        user_sessions[user_id] = {"code": "", "history": []}
+    if uid not in user_sessions:
+        user_sessions[uid] = {"code": "", "history": []}
+    
+    bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
     
     if text == "/start":
-        bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
-        send_message(chat_id, 
-            "🤖 *AI Code Bot*\n\n"
-            "🔥 *Отправь мне код, и я:*\n"
-            "✅ Исправлю ошибки\n"
-            "🚀 Запущу его\n"
-            "🎮 Открою результат в Telegram\n\n"
-            "*Команды:*\n"
-            "/run - запустить код\n"
-            "/fix - исправить ошибки\n"
-            "/bugs - найти ошибки\n"
-            "/show - показать код\n"
-            "/reset - очистить код\n\n"
-            "📝 *Пример кода:*\n"
-            "```python\nprint('Hello World!')\nfor i in range(5):\n    print(f'Строка {i}')\n```",
-            parse_mode="Markdown")
+        send_message(chat_id, "🤖 AI Code Bot\n\nПришли код - исправлю ошибки!\n🎮 /game - открыть игру", reply_markup=json.dumps(get_keyboard()))
     
-    elif text == "/run" or text == "🚀 ЗАПУСТИТЬ":
-        code = user_sessions[user_id]["code"]
+    elif text == "/game" or text == "🎮 ИГРА":
+        send_webapp_button(chat_id, "🎮 ОТКРЫТЬ ИГРУ", f"{bot_url}/game")
+    
+    elif text == "📝 Показать код" or text == "/show":
+        code = user_sessions[uid]["code"]
+        send_message(chat_id, f"```python\n{code[:3000] if code else '# Пусто'}\n```", parse_mode="Markdown")
+    
+    elif text == "💾 Скачать код" or text == "/done":
+        code = user_sessions[uid]["code"]
         if not code.strip():
-            send_message(chat_id, "📭 Нет кода для запуска\n\nОтправь код и напиши /run")
+            send_message(chat_id, "Нет кода")
             return
-        
-        bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
-        send_message(chat_id, "🚀 Запускаю код...")
-        send_webapp_button(chat_id, "🎮 ОТКРЫТЬ РЕЗУЛЬТАТ", f"{bot_url}/run/{user_id}")
+        with open(f"code_{uid}.py", "w") as f:
+            f.write(code)
+        with open(f"code_{uid}.py", "rb") as f:
+            requests.post(f"{API_URL}/sendDocument", data={"chat_id": chat_id}, files={"document": f})
+        os.remove(f"code_{uid}.py")
     
-    elif text == "/fix" or text == "🔧 ИСПРАВИТЬ":
-        code = user_sessions[user_id]["code"]
+    elif text == "🗑 Очистить всё" or text == "/reset":
+        user_sessions[uid] = {"code": "", "history": []}
+        send_message(chat_id, "Очищено!")
+    
+    elif text == "🔧 ИСПРАВИТЬ" or text == "/fix":
+        code = user_sessions[uid]["code"]
         if not code.strip():
-            send_message(chat_id, "📭 Нет кода для исправления")
+            send_message(chat_id, "Нет кода")
             return
-        fixed_code, report = auto_fix_code(code)
-        if fixed_code != code:
-            user_sessions[user_id]["code"] = fixed_code
-            send_message(chat_id, f"{report}\n\n🚀 Теперь напиши /run чтобы запустить!")
+        fixed, report = auto_fix_code(code)
+        if fixed != code:
+            user_sessions[uid]["code"] = fixed
+            send_message(chat_id, report)
         else:
-            send_message(chat_id, "✅ Код уже в хорошем состоянии!\n\n🚀 Напиши /run чтобы запустить")
+            send_message(chat_id, "Код уже хороший")
     
-    elif text == "/show" or text == "📝 ПОКАЗАТЬ":
-        code = user_sessions[user_id]["code"]
-        if not code.strip():
-            send_message(chat_id, "📭 Код пуст. Отправь код!")
+    elif text == "🐛 Ошибки" or text == "/bugs":
+        bugs = find_bugs(user_sessions[uid]["code"])
+        send_message(chat_id, "\n".join(bugs))
+    
+    elif text == "📊 Анализ" or text == "/complexity":
+        send_message(chat_id, analyze_complexity(user_sessions[uid]["code"]))
+    
+    elif text == "🔄 Порядок" or text == "/order":
+        user_sessions[uid]["code"] = reorder_code(user_sessions[uid]["code"])
+        send_message(chat_id, "Порядок исправлен!")
+    
+    elif text == "✅ Проверить" or text == "/validate":
+        try:
+            compile(user_sessions[uid]["code"], '<string>', 'exec')
+            send_message(chat_id, "✅ Синтаксис верен!")
+        except SyntaxError as e:
+            send_message(chat_id, f"❌ {e.msg}")
+    
+    elif text == "🗑 Удалить последний" or text == "/undo":
+        hist = user_sessions[uid].get("history", [])
+        if not hist:
+            send_message(chat_id, "Нет частей")
         else:
-            send_message(chat_id, f"```python\n{code[:3000]}\n```", parse_mode="Markdown")
+            hist.pop()
+            user_sessions[uid]["history"] = hist
+            full = "\n\n".join([h["part"] for h in hist])
+            user_sessions[uid]["code"] = full
+            send_message(chat_id, f"Удалено! Осталось: {len(hist)} частей")
     
-    elif text == "/bugs" or text == "🐛 ОШИБКИ":
-        bugs = find_bugs(user_sessions[user_id]["code"])
-        send_message(chat_id, "🐛 Результат поиска:\n" + "\n".join(bugs), parse_mode="Markdown")
-    
-    elif text == "/reset" or text == "🗑 ОЧИСТИТЬ":
-        user_sessions[user_id] = {"code": "", "history": []}
-        send_message(chat_id, "🧹 Код очищен! Отправь новый код.")
-    
-    elif text == "/help":
-        send_message(chat_id, 
-            "📚 *Команды бота:*\n\n"
-            "/start - начать\n"
-            "/run - запустить код (откроется в Telegram)\n"
-            "/fix - исправить ошибки\n"
-            "/bugs - найти ошибки\n"
-            "/show - показать код\n"
-            "/reset - очистить код\n"
-            "/help - эта справка\n\n"
-            "💡 *Как использовать:*\n"
-            "1. Отправь код\n"
-            "2. Напиши /fix (если есть ошибки)\n"
-            "3. Напиши /run\n"
-            "4. Нажми на кнопку - результат откроется в Telegram!",
-            parse_mode="Markdown")
-    
-    elif not text.startswith("/"):
-        # Сохраняем код
-        current = user_sessions[user_id]["code"]
+    elif not text.startswith("/") and not any(text.startswith(x) for x in ["📝", "💾", "🔧", "🐛", "📊", "🔄", "✅", "🗑", "🎮"]):
+        hist = user_sessions[uid].get("history", [])
+        hist.append({"time": str(datetime.now()), "part": text})
+        user_sessions[uid]["history"] = hist
+        current = user_sessions[uid]["code"]
         new_code = current + "\n\n" + text if current else text
-        user_sessions[user_id]["code"] = new_code
-        
-        # Проверяем на ошибки
-        bugs = find_bugs(new_code)
-        if len(bugs) == 1 and bugs[0] == "✅ Ошибок не найдено!":
-            send_message(chat_id, f"✅ Код сохранён!\n\n🚀 Напиши /run чтобы запустить!")
-        else:
-            send_message(chat_id, f"✅ Код сохранён!\n\n🐛 Найдены ошибки:\n" + "\n".join(bugs[:3]) + f"\n\n🔧 Напиши /fix чтобы исправить")
+        user_sessions[uid]["code"] = new_code
+        send_message(chat_id, f"✅ Часть сохранена! Всего: {len(hist)} частей, {len(new_code)} символов")
 
-# ==================== TELEGRAM БОТ ====================
-def run_telegram_bot():
-    logger.info("Telegram бот запущен!")
+# ==================== ЗАПУСК ====================
+def run_bot():
+    logger.info("Бот запущен!")
     last_id = 0
     while True:
         try:
             updates = get_updates(offset=last_id + 1 if last_id else None)
-            for update in updates:
-                update_id = update["update_id"]
-                if update_id in processed_update_ids:
+            for upd in updates:
+                if upd["update_id"] in processed_ids:
                     continue
-                processed_update_ids.add(update_id)
-                if len(processed_update_ids) > 1000:
-                    processed_update_ids.clear()
-                
-                if "message" in update:
-                    process_message(update["message"])
-                last_id = update_id
+                processed_ids.add(upd["update_id"])
+                if len(processed_ids) > 1000:
+                    processed_ids.clear()
+                if "message" in upd:
+                    process_message(upd["message"])
+                last_id = upd["update_id"]
             time.sleep(1)
         except Exception as e:
             logger.error(f"Ошибка: {e}")
             time.sleep(5)
 
-# ==================== ЗАПУСК ====================
 if __name__ == "__main__":
-    threading.Thread(target=run_telegram_bot, daemon=True).start()
+    threading.Thread(target=run_bot, daemon=True).start()
     app.run(host='0.0.0.0', port=PORT)
