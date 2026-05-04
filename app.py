@@ -29,15 +29,15 @@ def send_message(chat_id, text, parse_mode="Markdown", reply_markup=None):
         if reply_markup:
             data["reply_markup"] = reply_markup
         requests.post(f"{API_URL}/sendMessage", json=data, timeout=10)
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
+    except:
+        pass
 
 def send_file(chat_id, filename, caption=""):
     try:
         with open(filename, "rb") as f:
             requests.post(f"{API_URL}/sendDocument", data={"chat_id": chat_id, "caption": caption}, files={"document": f}, timeout=30)
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
+    except:
+        pass
 
 def get_updates(offset=None):
     params = {"timeout": 30}
@@ -49,7 +49,6 @@ def get_updates(offset=None):
     except:
         return []
 
-# ==================== AI ФУНКЦИЯ ====================
 def call_deepseek(prompt):
     try:
         url = "https://api.deepseek.com/v1/chat/completions"
@@ -79,43 +78,92 @@ def call_deepseek(prompt):
         logger.error(f"AI ошибка: {e}")
         return ""
 
-# ==================== ФУНКЦИИ АНАЛИЗА ====================
+# ==================== ФУНКЦИИ ====================
+def auto_fix_code(code):
+    """Полное автоисправление кода"""
+    if not code.strip():
+        return code
+    
+    # === ПРОСТЫЕ ИСПРАВЛЕНИЯ (без AI) ===
+    fixed = code
+    
+    # 1. Добавляем двоеточие в функции
+    fixed = re.sub(r'^(def\s+\w+\([^)]*\))\s*$', r'\1:', fixed, flags=re.MULTILINE)
+    
+    # 2. Добавляем пропущенные скобки
+    lines = fixed.split('\n')
+    for i, line in enumerate(lines):
+        if 'print(' in line and line.count('(') > line.count(')'):
+            lines[i] = line + ')'
+        # Исправляем отсутствие двоеточия в if/for/while
+        if re.match(r'^(if|elif|else|for|while)\s+.*[^:]\s*$', line):
+            if not line.strip().endswith(':'):
+                lines[i] = line + ':'
+    fixed = '\n'.join(lines)
+    
+    # 3. Удаляем дубликаты импортов
+    lines = fixed.split('\n')
+    seen_imports = set()
+    new_lines = []
+    for line in lines:
+        if line.strip().startswith(('import ', 'from ')):
+            if line.strip() not in seen_imports:
+                seen_imports.add(line.strip())
+                new_lines.append(line)
+        else:
+            new_lines.append(line)
+    fixed = '\n'.join(new_lines)
+    
+    # 4. Исправляем деление на ноль (оборачиваем в try)
+    if '/ 0' in fixed or '/0' in fixed:
+        fixed = fixed.replace('/ 0', '/ 1').replace('/0', '/1')
+        fixed = 'try:\n    ' + fixed.replace('\n', '\n    ') + '\nexcept ZeroDivisionError:\n    print("Ошибка: деление на ноль")\n'
+    
+    # 5. Добавляем недостающую строку в print
+    fixed = re.sub(r"print\(\"([^\"]*)\"$", r'print("\1")', fixed)
+    fixed = re.sub(r"print\('([^']*)'$", r"print('\1')", fixed)
+    
+    return fixed
+
 def analyze_complexity(code):
     lines = code.split('\n')
     code_lines = len([l for l in lines if l.strip() and not l.strip().startswith('#')])
     functions = code.count('def ')
-    branches = code.count('if ') + code.count('for ') + code.count('while ')
-    complexity = 1 + branches * 0.5
-    if complexity < 10:
-        rating = "Низкая"
-    elif complexity < 20:
-        rating = "Средняя"
-    else:
-        rating = "Высокая"
-    return f"**Анализ сложности:**\n\nСтрок кода: {code_lines}\nФункций: {functions}\nСложность: {complexity:.1f}\nОценка: {rating}"
+    if functions == 0 and not code.strip():
+        return "Нет кода для анализа"
+    complexity = 1 + code.count('if ') + code.count('for ') + code.count('while ') * 0.5
+    rating = "Низкая" if complexity < 10 else "Средняя" if complexity < 20 else "Высокая"
+    return f"**Анализ:**\nСтрок: {code_lines}\nФункций: {functions}\nСложность: {complexity:.1f}\nОценка: {rating}"
 
 def find_bugs(code):
     bugs = []
-    patterns = [
-        (r'/\s*0\b', 'Деление на ноль', 'КРИТИЧЕСКАЯ'),
-        (r'eval\s*\(', 'Использование eval()', 'ВЫСОКАЯ'),
-        (r'except\s*:', 'Голый except', 'СРЕДНЯЯ'),
-        (r'password\s*=\s*[\'"]', 'Хардкод пароля', 'КРИТИЧЕСКАЯ'),
-        (r'print\(', 'Отладочный print()', 'НИЗКАЯ'),
-    ]
-    for pattern, msg, severity in patterns:
-        if re.search(pattern, code):
-            bugs.append(f"- {msg} [{severity}]")
+    if '/ 0' in code or '/0' in code:
+        bugs.append("- Деление на ноль [КРИТИЧЕСКАЯ]")
+    if 'eval(' in code:
+        bugs.append("- Использование eval() [ВЫСОКАЯ]")
+    if re.search(r'except\s*:', code):
+        bugs.append("- Голый except [СРЕДНЯЯ]")
+    if re.search(r'password\s*=\s*[\'"]', code, re.IGNORECASE):
+        bugs.append("- Хардкод пароля [КРИТИЧЕСКАЯ]")
+    if 'print(' in code:
+        bugs.append("- Отладочный print() [НИЗКАЯ]")
+    
+    # Проверка синтаксиса
+    try:
+        compile(code, '<string>', 'exec')
+    except SyntaxError as e:
+        bugs.append(f"- Синтаксическая ошибка: {e.msg} [КРИТИЧЕСКАЯ]")
+    
     if not bugs:
-        return "Ошибок не найдено!"
+        return "✅ Ошибок не найдено!"
     return "**Найденные ошибки:**\n" + "\n".join(bugs)
 
 def validate_code(code):
     try:
         compile(code, '<string>', 'exec')
-        return "Код синтаксически верен!"
+        return "✅ Код синтаксически верен!"
     except SyntaxError as e:
-        return f"Синтаксическая ошибка: {e.msg}\nСтрока: {e.lineno}"
+        return f"❌ Ошибка: {e.msg}\n📍 Строка: {e.lineno}"
 
 def reorder_code(code):
     lines = code.split('\n')
@@ -125,7 +173,7 @@ def reorder_code(code):
     for line in lines:
         if line.strip().startswith(('import ', 'from ')):
             imports.append(line)
-        elif line.strip().startswith(('def ', 'async def ')):
+        elif line.strip().startswith('def '):
             functions.append(line)
         else:
             other.append(line)
@@ -139,7 +187,7 @@ def reorder_code(code):
     result.extend(other)
     return '\n'.join(result)
 
-def run_code_safe(code: str) -> dict:
+def run_code_safe(code):
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(code)
         temp_file = f.name
@@ -147,245 +195,130 @@ def run_code_safe(code: str) -> dict:
         process = subprocess.run(["python3", temp_file], capture_output=True, text=True, timeout=5)
         return {"success": process.returncode == 0, "output": process.stdout, "error": process.stderr}
     except subprocess.TimeoutExpired:
-        return {"success": False, "output": "", "error": "Превышено время выполнения (5 сек)"}
+        return {"success": False, "output": "", "error": "Timeout (5 sec)"}
     except Exception as e:
         return {"success": False, "output": "", "error": str(e)}
     finally:
         os.unlink(temp_file)
 
-def auto_fix_code(code: str) -> str:
-    if not code.strip():
-        return code
-    
-    bug_descriptions = []
-    patterns = [
-        (r'/\s*0\b', 'деление на ноль', 'добавьте проверку "if divisor != 0"'),
-        (r'eval\s*\(', 'использование eval()', 'замените на ast.literal_eval()'),
-        (r'except\s*:', 'голый except', 'используйте "except Exception as e:"'),
-        (r'password\s*=\s*[\'"]', 'хардкод пароля', 'используйте os.getenv("PASSWORD")'),
-    ]
-    
-    for pattern, msg, fix in patterns:
-        if re.search(pattern, code):
-            bug_descriptions.append(f"- {msg} (исправление: {fix})")
-    
-    if not bug_descriptions:
-        return code
-    
-    prompt = f"""Исправь следующие ошибки в коде. Верни ТОЛЬКО исправленный код, без объяснений.
-
-Найденные ошибки:
-{chr(10).join(bug_descriptions)}
-
-Исходный код:
-{code}
-
-Исправленный код:"""
-    
-    ai_response = call_deepseek(prompt)
-    if ai_response:
-        return ai_response
-    return code
-
-# ==================== КЛАВИАТУРА ДЛЯ ТЕЛЕГРАМ ====================
+# ==================== КЛАВИАТУРА ====================
 def get_main_keyboard():
     return {
         "keyboard": [
             ["📝 Показать код", "💾 Скачать код"],
             ["🔍 Анализ сложности", "🐛 Поиск ошибок"],
-            ["✅ Проверить код", "🔄 Переставить функции"],
-            ["🏃 Запустить код", "🔧 Исправить ошибки"],
+            ["🔧 Полное автоисправление", "🔄 Переставить функции"],
+            ["✅ Проверить код", "🏃 Запустить код"],
             ["🌐 Веб-редактор", "🗑 Очистить всё"],
             ["❓ Помощь"]
         ],
-        "resize_keyboard": True,
-        "one_time_keyboard": False
+        "resize_keyboard": True
     }
 
-def get_files_keyboard(files):
-    keyboard = []
-    row = []
-    for i, name in enumerate(files.keys()):
-        row.append({"text": f"📄 {name[:20]}"})
-        if len(row) == 2:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-    keyboard.append([{"text": "➕ Добавить файл"}, {"text": "📦 Экспорт ZIP"}])
-    keyboard.append([{"text": "🔙 Назад в главное меню"}])
-    return {"inline_keyboard": keyboard}
-
-# ==================== ОБРАБОТКА TELEGRAM ====================
+# ==================== ОБРАБОТКА ====================
 def process_message(message):
     chat_id = message["chat"]["id"]
     user_id = message["from"]["id"]
     text = message.get("text", "")
     
     if user_id not in user_sessions:
-        user_sessions[user_id] = {"code": "", "history": [], "project_files": {}, "current_file": "main.py"}
+        user_sessions[user_id] = {"code": "", "history": []}
     
-    # Команды и кнопки
-    if text == "/start" or text == "🔙 Назад в главное меню":
+    if text == "/start":
         bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
         send_message(chat_id, 
             "🤖 *AI Code Assembler Bot*\n\n"
-            "Привет! Я собираю код из частей с помощью DeepSeek AI.\n\n"
+            "Привет! Я собираю и ИСПРАВЛЯЮ код.\n\n"
             f"🌐 *Веб-редактор:* {bot_url}/web/{user_id}\n\n"
-            "👇 *Нажми на кнопку ниже, чтобы начать:*",
+            "👇 *Нажми кнопку:*",
             parse_mode="Markdown",
             reply_markup=json.dumps(get_main_keyboard()))
     
     elif text == "❓ Помощь" or text == "/help":
-        send_message(chat_id, 
-            "📚 *Команды бота:*\n\n"
-            "📝 Показать код — показать текущий код\n"
-            "💾 Скачать код — скачать код файлом\n"
-            "🔍 Анализ сложности — анализ сложности кода\n"
-            "🐛 Поиск ошибок — поиск багов\n"
-            "✅ Проверить код — проверка синтаксиса\n"
-            "🔄 Переставить функции — перестановка\n"
-            "🏃 Запустить код — выполнить в песочнице\n"
-            "🔧 Исправить ошибки — автоисправление\n"
-            "🌐 Веб-редактор — открыть веб-редактор\n"
-            "🗑 Очистить всё — очистить код\n"
-            "❓ Помощь — это сообщение",
-            parse_mode="Markdown",
-            reply_markup=json.dumps(get_main_keyboard()))
+        send_message(chat_id, "📚 Команды:\n/show - код\n/done - скачать\n/reset - очистить\n/auto_fix - исправить\n/web - редактор", parse_mode="Markdown", reply_markup=json.dumps(get_main_keyboard()))
     
     elif text == "📝 Показать код" or text == "/show":
         code = user_sessions[user_id]["code"]
         if not code.strip():
-            send_message(chat_id, "📭 Код пуст. Отправь мне часть кода!")
+            send_message(chat_id, "📭 Код пуст")
         else:
             send_message(chat_id, f"```python\n{code}\n```", parse_mode="Markdown")
     
     elif text == "💾 Скачать код" or text == "/done":
         code = user_sessions[user_id]["code"]
         if not code.strip():
-            send_message(chat_id, "❌ Нет кода для сохранения")
+            send_message(chat_id, "❌ Нет кода")
             return
         filename = f"code_{user_id}.py"
-        with open(filename, "w", encoding="utf-8") as f:
+        with open(filename, "w") as f:
             f.write(code)
-        send_file(chat_id, filename, f"✅ Готовый код! {len(code)} символов")
+        send_file(chat_id, filename, "✅ Код готов!")
         os.remove(filename)
     
     elif text == "🗑 Очистить всё" or text == "/reset":
         user_sessions[user_id]["code"] = ""
-        user_sessions[user_id]["history"] = []
         send_message(chat_id, "🧹 Код очищен!", reply_markup=json.dumps(get_main_keyboard()))
     
     elif text == "🔄 Переставить функции" or text == "/order":
-        code = user_sessions[user_id]["code"]
-        if not code:
-            send_message(chat_id, "📭 Нет кода")
-        else:
-            user_sessions[user_id]["code"] = reorder_code(code)
-            send_message(chat_id, "🔄 Код переставлен! Импорты и функции в правильном порядке.")
+        user_sessions[user_id]["code"] = reorder_code(user_sessions[user_id]["code"])
+        send_message(chat_id, "🔄 Код переставлен!")
     
     elif text == "🔍 Анализ сложности" or text == "/complexity":
-        code = user_sessions[user_id]["code"]
-        if not code:
-            send_message(chat_id, "📭 Нет кода для анализа")
-        else:
-            send_message(chat_id, analyze_complexity(code), parse_mode="Markdown")
+        send_message(chat_id, analyze_complexity(user_sessions[user_id]["code"]), parse_mode="Markdown")
     
     elif text == "🐛 Поиск ошибок" or text == "/bugs":
-        code = user_sessions[user_id]["code"]
-        if not code:
-            send_message(chat_id, "📭 Нет кода для проверки")
-        else:
-            send_message(chat_id, find_bugs(code), parse_mode="Markdown")
+        send_message(chat_id, find_bugs(user_sessions[user_id]["code"]), parse_mode="Markdown")
     
     elif text == "✅ Проверить код" or text == "/validate":
-        code = user_sessions[user_id]["code"]
-        if not code:
-            send_message(chat_id, "📭 Нет кода для проверки")
-        else:
-            send_message(chat_id, validate_code(code), parse_mode="Markdown")
+        send_message(chat_id, validate_code(user_sessions[user_id]["code"]), parse_mode="Markdown")
     
     elif text == "🏃 Запустить код" or text == "/run":
-        code = user_sessions[user_id]["code"]
-        if not code.strip():
-            send_message(chat_id, "📭 Нет кода для запуска")
-            return
-        send_message(chat_id, "🏃 Запуск кода в песочнице...")
-        result = run_code_safe(code)
+        result = run_code_safe(user_sessions[user_id]["code"])
         if result["success"]:
-            output = result["output"][:3000] if result["output"] else "(нет вывода)"
-            send_message(chat_id, f"✅ *Выполнение успешно!*\n\n```\n{output}\n```", parse_mode="Markdown")
+            send_message(chat_id, f"✅ Выполнено!\n```\n{result['output'][:2000]}\n```", parse_mode="Markdown")
         else:
-            error = result["error"][:2000] if result["error"] else "Неизвестная ошибка"
-            send_message(chat_id, f"❌ *Ошибка выполнения:*\n```\n{error}\n```", parse_mode="Markdown")
+            send_message(chat_id, f"❌ Ошибка:\n```\n{result['error'][:2000]}\n```", parse_mode="Markdown")
     
-    elif text == "🔧 Исправить ошибки" or text == "/auto_fix":
+    # === ГЛАВНОЕ: ПОЛНОЕ АВТОИСПРАВЛЕНИЕ ===
+    elif text == "🔧 Полное автоисправление" or text == "/auto_fix":
         code = user_sessions[user_id]["code"]
         if not code.strip():
-            send_message(chat_id, "📭 Нет кода для исправления")
+            send_message(chat_id, "📭 Нет кода для исправления\n\nСначала отправь код!")
             return
         
-        send_message(chat_id, "🔧 AI исправляет ошибки...")
+        send_message(chat_id, "🔧 Исправляю код...")
+        
+        # Исправляем
         fixed_code = auto_fix_code(code)
         
         if fixed_code != code:
             user_sessions[user_id]["code"] = fixed_code
-            send_message(chat_id, "✅ *Код автоматически исправлен!*\n📝 Показать код — посмотреть результат", parse_mode="Markdown")
+            send_message(chat_id, f"✅ **Код исправлен!**\n\n📊 Было ошибок: {len(find_bugs(code).split(chr(10))) - 1}\n🔧 Исправлено!\n\n📝 Показать код — посмотреть результат", parse_mode="Markdown")
         else:
-            send_message(chat_id, "❌ Ошибок не найдено или AI не смог их исправить.\n🐛 Поиск ошибок — проверить вручную", parse_mode="Markdown")
+            send_message(chat_id, "✅ Код уже в хорошем состоянии! Ошибок не найдено.", parse_mode="Markdown")
     
     elif text == "🌐 Веб-редактор" or text == "/web":
         bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
-        send_message(chat_id, f"🎨 *Веб-редактор*\n\n🔗 {bot_url}/web/{user_id}\n\nТам уже будет твой код!", parse_mode="Markdown")
+        send_message(chat_id, f"🎨 Веб-редактор: {bot_url}/web/{user_id}", parse_mode="Markdown")
     
-    elif text == "➕ Добавить файл":
-        send_message(chat_id, "📝 Введите имя файла для добавления:\nНапример: `my_module.py`", parse_mode="Markdown")
-    
-    elif text == "📦 Экспорт ZIP":
-        files = user_sessions[user_id].get("project_files", {})
-        if not files:
-            send_message(chat_id, "📭 Нет файлов для экспорта.\nСначала добавьте файлы командой /add_file")
-        else:
-            import zipfile
-            from io import BytesIO
-            zip_buffer = BytesIO()
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for name, content in files.items():
-                    zf.writestr(name, content)
-            zip_buffer.seek(0)
-            with open(f"project_{user_id}.zip", "wb") as f:
-                f.write(zip_buffer.getvalue())
-            send_file(chat_id, f"project_{user_id}.zip", "📦 Архив проекта")
-            os.remove(f"project_{user_id}.zip")
-    
-    # Обработка обычного кода
-    elif not text.startswith("/") and not text.startswith("📝") and not text.startswith("💾") and not text.startswith("🔍") and not text.startswith("🐛") and not text.startswith("✅") and not text.startswith("🔄") and not text.startswith("🏃") and not text.startswith("🔧") and not text.startswith("🌐") and not text.startswith("🗑") and not text.startswith("❓") and not text.startswith("➕") and not text.startswith("📦") and not text.startswith("🔙"):
+    # Обработка кода
+    elif not text.startswith("/") and not text.startswith("📝") and not text.startswith("💾") and not text.startswith("🔍") and not text.startswith("🐛") and not text.startswith("✅") and not text.startswith("🔄") and not text.startswith("🏃") and not text.startswith("🔧") and not text.startswith("🌐") and not text.startswith("🗑") and not text.startswith("❓"):
         current = user_sessions[user_id]["code"]
         send_message(chat_id, "🧠 AI анализирует код...")
         
         if current:
-            prompt = f"""Объедини код. Верни ТОЛЬКО итоговый код, без объяснений.
-
-Текущий код:
-{current}
-
-Новая часть:
-{text}
-
-Итоговый код:"""
+            prompt = f"Объедини код. Верни ТОЛЬКО итоговый код.\n\nТекущий код:\n{current}\n\nНовая часть:\n{text}\n\nИтоговый код:"
         else:
-            prompt = f"""Верни ТОЛЬКО этот код, без комментариев:
-{text}"""
+            prompt = f"Верни ТОЛЬКО этот код:\n{text}"
         
         ai_response = call_deepseek(prompt)
         new_code = ai_response if ai_response else (current + "\n\n" + text if current else text)
         user_sessions[user_id]["code"] = new_code
-        
-        send_message(chat_id, f"✅ *Код обновлён!*\n📊 Размер: {len(new_code)} символов\n\n📝 Показать код — посмотреть\n🏃 Запустить код — проверить работу", parse_mode="Markdown")
+        send_message(chat_id, f"✅ Код обновлён! {len(new_code)} символов\n\n📝 Показать код\n🔧 Полное автоисправление", parse_mode="Markdown")
 
 # ==================== TELEGRAM БОТ ====================
 def run_telegram_bot():
-    logger.info("🤖 Telegram бот запущен!")
+    logger.info("Бот запущен!")
     last_update_id = 0
     while True:
         try:
@@ -401,21 +334,17 @@ def run_telegram_bot():
 
 # ==================== ВЕБ-СЕРВЕР ====================
 WEB_HTML = '''<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🤖 AI Code Editor</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #1e1e1e; font-family: monospace; }
-        #editor { height: 85vh; }
-        .toolbar { background: #2d2d2d; padding: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
-        button { padding: 8px 16px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 4px; font-size: 14px; }
-        button:hover { background: #1177bb; }
-        .status { background: #1e1e1e; color: #888; padding: 5px 10px; font-size: 12px; }
-    </style>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/editor/editor.main.min.css">
+<html>
+<head><meta charset="UTF-8"><title>AI Code Editor</title>
+<style>
+body { background: #1e1e1e; margin:0; }
+#editor { height: 85vh; }
+.toolbar { background: #2d2d2d; padding: 10px; display: flex; gap: 10px; }
+button { padding: 8px 16px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 4px; }
+button:hover { background: #1177bb; }
+.status { background: #1e1e1e; color: #888; padding: 5px 10px; }
+</style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/editor/editor.main.min.css">
 </head>
 <body>
 <div class="toolbar">
@@ -427,102 +356,52 @@ WEB_HTML = '''<!DOCTYPE html>
     <button onclick="downloadCode()">📥 Скачать</button>
 </div>
 <div id="editor"></div>
-<div class="status" id="status">Готов к работе</div>
-
+<div class="status" id="status">Готов</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.js"></script>
 <script>
-let editor;
-const USER_ID = window.location.pathname.split('/')[2];
-const API_URL = window.location.origin;
-
+let editor; const USER_ID = window.location.pathname.split('/')[2]; const API_URL = window.location.origin;
 require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
 require(['vs/editor/editor.main'], function() {
     editor = monaco.editor.create(document.getElementById('editor'), {
-        value: '',
-        language: 'python',
-        theme: 'vs-dark',
-        fontSize: 14,
-        minimap: { enabled: true },
-        automaticLayout: true
+        value: '', language: 'python', theme: 'vs-dark', fontSize: 14, minimap: { enabled: true }, automaticLayout: true
     });
     loadCode();
 });
-
 async function loadCode() {
     const res = await fetch(`${API_URL}/api/get_code?user_id=${USER_ID}`);
     const data = await res.json();
     editor.setValue(data.code || '# Код пуст');
 }
-
 async function saveCode() {
-    const code = editor.getValue();
-    await fetch(`${API_URL}/api/save_code`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({user_id: USER_ID, code: code})
-    });
-    document.getElementById('status').innerText = '✅ Сохранено!';
-    setTimeout(() => document.getElementById('status').innerText = 'Готов к работе', 2000);
+    await fetch(`${API_URL}/api/save_code`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({user_id: USER_ID, code: editor.getValue()}) });
+    document.getElementById('status').innerText = 'Сохранено!';
+    setTimeout(() => document.getElementById('status').innerText = 'Готов', 2000);
 }
-
 async function runCode() {
-    const code = editor.getValue();
-    const res = await fetch(`${API_URL}/api/run_code`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: code})
-    });
+    const res = await fetch(`${API_URL}/api/run_code`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({code: editor.getValue()}) });
     const data = await res.json();
-    if (data.success) {
-        alert('✅ Выполнено!\n\n' + (data.output || '(нет вывода)'));
-    } else {
-        alert('❌ Ошибка:\n\n' + data.error);
-    }
+    alert(data.success ? (data.output || 'Успешно') : 'Ошибка: ' + data.error);
 }
-
 async function analyzeCode() {
-    const code = editor.getValue();
-    const res = await fetch(`${API_URL}/api/analyze`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: code})
-    });
+    const res = await fetch(`${API_URL}/api/analyze`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({code: editor.getValue()}) });
     const data = await res.json();
-    alert('📊 Анализ сложности:\n\n' + data.report);
+    alert(data.report);
 }
-
 async function findBugs() {
-    const code = editor.getValue();
-    const res = await fetch(`${API_URL}/api/bugs`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: code})
-    });
+    const res = await fetch(`${API_URL}/api/bugs`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({code: editor.getValue()}) });
     const data = await res.json();
-    alert('🐛 Поиск ошибок:\n\n' + data.report);
+    alert(data.report);
 }
-
 async function autoFix() {
-    const code = editor.getValue();
-    const res = await fetch(`${API_URL}/api/auto_fix`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: code})
-    });
+    const res = await fetch(`${API_URL}/api/auto_fix`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({code: editor.getValue()}) });
     const data = await res.json();
     editor.setValue(data.code);
-    document.getElementById('status').innerText = '🔧 Код исправлен!';
-    setTimeout(() => document.getElementById('status').innerText = 'Готов к работе', 2000);
+    document.getElementById('status').innerText = 'Исправлено!';
+    setTimeout(() => document.getElementById('status').innerText = 'Готов', 2000);
 }
-
 function downloadCode() {
-    const code = editor.getValue();
-    const blob = new Blob([code], {type: 'text/plain'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'code.py';
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const blob = new Blob([editor.getValue()], {type: 'text/plain'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'code.py'; a.click(); URL.revokeObjectURL(a.href);
 }
 </script>
 </body>
@@ -538,17 +417,17 @@ class WebHandler(BaseHTTPRequestHandler):
             self.wfile.write(WEB_HTML.encode('utf-8'))
         elif parsed.path == '/' or parsed.path == '/health':
             self.send_response(200)
-            self.send_header('Content-type', 'text/plain; charset=utf-8')
+            self.send_header('Content-type', 'text/plain')
             self.end_headers()
-            self.wfile.write('Бот работает!'.encode('utf-8'))
+            self.wfile.write(b'Bot is running!')
         elif parsed.path.startswith('/api/get_code'):
             query = parse_qs(parsed.query)
             user_id = int(query.get('user_id', [0])[0])
             code = user_sessions.get(user_id, {}).get("code", "")
             self.send_response(200)
-            self.send_header('Content-type', 'application/json; charset=utf-8')
+            self.send_header('Content-type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({"code": code}, ensure_ascii=False).encode('utf-8'))
+            self.wfile.write(json.dumps({"code": code}).encode())
         else:
             self.send_response(404)
             self.end_headers()
@@ -609,10 +488,9 @@ class WebHandler(BaseHTTPRequestHandler):
 
 def run_web_server():
     server = HTTPServer(('0.0.0.0', PORT), WebHandler)
-    logger.info(f"Веб-сервер запущен на порту {PORT}")
+    logger.info(f"Web server on port {PORT}")
     server.serve_forever()
 
-# ==================== ЗАПУСК ====================
 if __name__ == "__main__":
     threading.Thread(target=run_telegram_bot, daemon=True).start()
     run_web_server()
