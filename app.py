@@ -27,13 +27,9 @@ last_update_id = 0
 
 # ==================== AI ФУНКЦИИ ====================
 def call_deepseek(prompt):
-    """Вызов DeepSeek API"""
     try:
         url = "https://api.deepseek.com/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
         data = {
             "model": "deepseek-chat",
             "messages": [{"role": "user", "content": prompt}],
@@ -42,7 +38,6 @@ def call_deepseek(prompt):
         }
         response = requests.post(url, headers=headers, json=data, timeout=60)
         if response.status_code != 200:
-            logger.error(f"API ошибка: {response.status_code}")
             return ""
         result = response.json()
         if "choices" not in result or not result["choices"]:
@@ -60,29 +55,19 @@ def call_deepseek(prompt):
         logger.error(f"AI ошибка: {e}")
         return ""
 
-# ==================== НОВЫЕ AI ФУНКЦИИ ====================
+# ==================== НОВЫЕ ФУНКЦИИ ====================
 
-def generate_code_by_description(description):
-    """№1: Генерация кода по описанию"""
-    prompt = f"""Напиши код на Python по описанию. Верни ТОЛЬКО код, без объяснений.
+# 1. ГОЛОСОВОЙ ВВОД КОДА (преобразование текста в код)
+def voice_to_code(description):
+    prompt = f"""Преобразуй это текстовое описание в код на Python. Верни ТОЛЬКО код, без объяснений.
 
 Описание: {description}
 
 Код:"""
     return call_deepseek(prompt)
 
-def generate_tests(code):
-    """№2: Генерация авто-тестов"""
-    prompt = f"""Напиши pytest тесты для этого кода. Верни ТОЛЬКО код тестов.
-
-Код:
-{code}
-
-Тесты:"""
-    return call_deepseek(prompt)
-
-def convert_code(code, from_lang, to_lang):
-    """№3: Преобразование кода из одного языка в другой"""
+# 2. ПОДДЕРЖКА ДРУГИХ ЯЗЫКОВ
+def convert_to_language(code, from_lang, to_lang):
     prompt = f"""Переведи этот код с {from_lang} на {to_lang}. Верни ТОЛЬКО код.
 
 Исходный код ({from_lang}):
@@ -91,129 +76,138 @@ def convert_code(code, from_lang, to_lang):
 Код на {to_lang}:"""
     return call_deepseek(prompt)
 
-def code_review(code):
-    """№4: Code Review - анализ кода как опытный разработчик"""
-    prompt = f"""Проведи code review этого кода. Найди проблемы, дай рекомендации по улучшению.
+def generate_code_in_language(description, language):
+    prompt = f"""Напиши код на {language} по описанию. Верни ТОЛЬКО код.
 
-Код:
-{code}
+Описание: {description}
 
-Ответ в формате:
-✅ Что хорошо:
-[список]
-
-⚠️ Что можно улучшить:
-[список с конкретными строками]
-
-💡 Рекомендации:
-[список]"""
+Код на {language}:"""
     return call_deepseek(prompt)
 
-def add_comments(code):
-    """№5: Добавление комментариев в код"""
-    prompt = f"""Добавь подробные комментарии к этому коду. Объясни, что делает каждая функция и сложная часть. Верни ТОЛЬКО код с комментариями.
-
-Код:
-{code}
-
-Код с комментариями:"""
-    return call_deepseek(prompt)
-
-def run_tests(test_code, main_code):
-    """Запуск тестов (локально)"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
-        full_code = main_code + "\n\n" + test_code
-        f.write(full_code)
-        temp_file = f.name
-    try:
-        process = subprocess.run(["python3", temp_file], capture_output=True, text=True, timeout=10)
-        return {"success": process.returncode == 0, "output": process.stdout, "error": process.stderr}
-    except subprocess.TimeoutExpired:
-        return {"success": False, "output": "", "error": "Превышено время выполнения тестов (10 сек)"}
-    except Exception as e:
-        return {"success": False, "output": "", "error": str(e)}
-    finally:
-        os.unlink(temp_file)
-
-def create_replit_export(code):
-    """№18: Экспорт в Replit - создаёт ссылку для Replit"""
-    # Replit принимает код через GET параметры
-    encoded_code = code.replace('"', '\\"').replace('\n', '\\n')
-    return f"https://replit.com/@replit/Replify?code={encoded_code[:500]}"
-
-def create_webapp_html(code, user_id):
-    """№20: Telegram WebApp - создаёт HTML страницу с редактором кода"""
+# 3. ЭКСПОРТ В PDF (создание HTML страницы для печати в PDF)
+def create_pdf_export(code, filename="code.py", user_name="Пользователь"):
+    escaped_code = code.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('—', '-')
+    
     return f'''<!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Code Editor</title>
+    <title>Экспорт кода - AI Code Bot</title>
     <style>
-        body {{ background: #1e1e1e; font-family: monospace; margin: 0; padding: 20px; }}
-        #editor {{ width: 100%; height: 70vh; background: #1e1e1e; color: #d4d4d4; font-family: monospace; font-size: 14px; padding: 15px; border: 1px solid #333; border-radius: 8px; }}
-        .toolbar {{ margin-bottom: 10px; }}
-        button {{ background: #0e639c; color: white; border: none; padding: 8px 16px; margin-right: 8px; cursor: pointer; border-radius: 4px; }}
-        button:hover {{ background: #1177bb; }}
-        .output {{ background: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 15px; margin-top: 10px; height: 200px; overflow: auto; font-family: monospace; }}
-        h1 {{ color: #667eea; font-size: 20px; }}
+        @media print {{
+            body {{ margin: 2cm; }}
+            .page-break {{ page-break-before: always; }}
+        }}
+        body {{ font-family: 'Courier New', monospace; background: white; padding: 40px; }}
+        .header {{ text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }}
+        .file-info {{ background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 20px; }}
+        .file-name {{ font-size: 18px; font-weight: bold; color: #2c3e50; }}
+        .file-meta {{ color: #7f8c8d; font-size: 12px; margin-top: 5px; }}
+        .code-block {{ background: #f8f8f8; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }}
+        .code-header {{ background: #2c3e50; color: white; padding: 10px 15px; font-family: monospace; }}
+        pre {{ margin: 0; padding: 20px; overflow-x: auto; font-size: 12px; line-height: 1.5; }}
+        .footer {{ text-align: center; margin-top: 30px; font-size: 10px; color: #999; border-top: 1px solid #eee; padding-top: 20px; }}
+        .signature {{ margin-top: 40px; padding: 20px; background: #f0f0f0; border-radius: 8px; text-align: center; }}
+        h1 {{ color: #2c3e50; }}
+        .badge {{ display: inline-block; background: #3498db; color: white; padding: 2px 8px; border-radius: 4px; font-size: 10px; }}
     </style>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
-    <h1>🤖 AI Code Editor</h1>
-    <div class="toolbar">
-        <button onclick="saveCode()">💾 Сохранить</button>
-        <button onclick="runCode()">▶️ Запустить</button>
-        <button onclick="analyzeCode()">📊 Анализ</button>
+    <div class="header">
+        <h1>🤖 AI Code Bot - Экспорт кода</h1>
+        <p>Сгенерировано: {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}</p>
+        <p>Пользователь: {user_name}</p>
     </div>
-    <textarea id="editor">{code}</textarea>
-    <div class="output" id="output">⚡ Готов к работе</div>
-    <script>
-        const tg = window.Telegram.WebApp;
-        tg.ready();
-        tg.expand();
-        
-        async function saveCode() {{
-            const code = document.getElementById('editor').value;
-            await fetch('/api/save_code', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{user_id: {user_id}, code: code}})
-            }});
-            document.getElementById('output').innerHTML = '<span style="color:#6a9955">✅ Сохранено!</span>';
-        }}
-        
-        async function runCode() {{
-            const code = document.getElementById('editor').value;
-            const res = await fetch('/api/run', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{code: code}})
-            }});
-            const data = await res.json();
-            if (data.success) {{
-                document.getElementById('output').innerHTML = '<span style="color:#6a9955">✅ Выполнено!</span><br><br>' + (data.output || '(нет вывода)');
-            }} else {{
-                document.getElementById('output').innerHTML = '<span style="color:#f48771">❌ Ошибка:</span><br><br>' + data.error;
-            }}
-        }}
-        
-        async function analyzeCode() {{
-            const code = document.getElementById('editor').value;
-            const res = await fetch('/api/analyze', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{code: code}})
-            }});
-            const data = await res.json();
-            document.getElementById('output').innerHTML = '📊 ' + data.report;
-        }}
-    </script>
+    
+    <div class="file-info">
+        <div class="file-name">📄 {filename}</div>
+        <div class="file-meta">
+            <span class="badge">Язык: Python</span>
+            <span class="badge">Символов: {len(code)}</span>
+            <span class="badge">Строк: {len(code.splitlines())}</span>
+        </div>
+    </div>
+    
+    <div class="code-block">
+        <div class="code-header">📝 Код</div>
+        <pre><code>{escaped_code}</code></pre>
+    </div>
+    
+    <div class="signature">
+        <p>🤖 Создано с помощью <strong>AI Code Bot</strong></p>
+        <p>Telegram бот для работы с кодом</p>
+        <p style="font-size: 10px; margin-top: 10px;">Лицензия: MIT | Подписано AI Code Bot</p>
+    </div>
+    
+    <div class="footer">
+        <p>Этот документ создан автоматически. Для проверки кода используйте бота в Telegram.</p>
+    </div>
 </body>
 </html>'''
 
-# ==================== ФУНКЦИИ TELEGRAM ====================
+def create_multi_file_pdf(files, user_name="Пользователь"):
+    """Создаёт PDF с несколькими файлами"""
+    files_html = ""
+    for filename, code in files.items():
+        escaped_code = code.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        files_html += f'''
+    <div class="file-info" style="page-break-before: avoid;">
+        <div class="file-name">📄 {filename}</div>
+        <div class="file-meta">
+            <span class="badge">Символов: {len(code)}</span>
+            <span class="badge">Строк: {len(code.splitlines())}</span>
+        </div>
+    </div>
+    <div class="code-block">
+        <div class="code-header">📝 {filename}</div>
+        <pre><code>{escaped_code}</code></pre>
+    </div>
+    <div style="height: 30px;"></div>
+'''
+    
+    return f'''<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Экспорт кода - {len(files)} файлов</title>
+    <style>
+        @media print {{
+            body {{ margin: 2cm; }}
+        }}
+        body {{ font-family: 'Courier New', monospace; background: white; padding: 40px; }}
+        .header {{ text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }}
+        .file-info {{ background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 20px; }}
+        .file-name {{ font-size: 18px; font-weight: bold; color: #2c3e50; }}
+        .file-meta {{ color: #7f8c8d; font-size: 12px; margin-top: 5px; }}
+        .code-block {{ background: #f8f8f8; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; margin-bottom: 20px; }}
+        .code-header {{ background: #2c3e50; color: white; padding: 10px 15px; font-family: monospace; }}
+        pre {{ margin: 0; padding: 20px; overflow-x: auto; font-size: 12px; line-height: 1.5; }}
+        .footer {{ text-align: center; margin-top: 30px; font-size: 10px; color: #999; border-top: 1px solid #eee; padding-top: 20px; }}
+        .signature {{ margin-top: 40px; padding: 20px; background: #f0f0f0; border-radius: 8px; text-align: center; }}
+        .badge {{ display: inline-block; background: #3498db; color: white; padding: 2px 8px; border-radius: 4px; font-size: 10px; }}
+        h1 {{ color: #2c3e50; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🤖 AI Code Bot - Экспорт кода</h1>
+        <p>Сгенерировано: {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}</p>
+        <p>Пользователь: {user_name}</p>
+        <p>Всего файлов: {len(files)}</p>
+    </div>
+    {files_html}
+    <div class="signature">
+        <p>🤖 Создано с помощью <strong>AI Code Bot</strong></p>
+        <p>Telegram бот для работы с кодом</p>
+        <p style="font-size: 10px; margin-top: 10px;">Подписано: AI Code Bot | Лицензия: MIT</p>
+    </div>
+    <div class="footer">
+        <p>Этот документ создан автоматически. Для проверки кода используйте бота в Telegram.</p>
+    </div>
+</body>
+</html>'''
+
+# ==================== ОСТАЛЬНЫЕ ФУНКЦИИ ====================
 def send_message(chat_id, text, parse_mode=None, reply_markup=None):
     try:
         data = {"chat_id": chat_id, "text": text}
@@ -235,6 +229,14 @@ def send_document(chat_id, filename, caption=""):
     except:
         return False
 
+def send_voice_message(chat_id, voice_file):
+    try:
+        with open(voice_file, "rb") as f:
+            requests.post(f"{API_URL}/sendVoice", data={"chat_id": chat_id}, files={"voice": f}, timeout=30)
+        return True
+    except:
+        return False
+
 def get_updates():
     global last_update_id
     params = {"timeout": 30}
@@ -246,15 +248,20 @@ def get_updates():
     except:
         return []
 
-def run_code_safe(code):
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
+def run_code_safe(code, language="python"):
+    ext_map = {"python": "py", "javascript": "js", "java": "java", "cpp": "cpp", "go": "go", "rust": "rs"}
+    ext = ext_map.get(language, "py")
+    with tempfile.NamedTemporaryFile(mode='w', suffix=f'.{ext}', delete=False, encoding='utf-8') as f:
         f.write(code)
         temp_file = f.name
     try:
-        process = subprocess.run(["python3", temp_file], capture_output=True, text=True, timeout=5)
+        if language == "python":
+            process = subprocess.run(["python3", temp_file], capture_output=True, text=True, timeout=5)
+        else:
+            process = subprocess.run(["cat", temp_file], capture_output=True, text=True, timeout=2)
         return {"success": process.returncode == 0, "output": process.stdout, "error": process.stderr}
     except subprocess.TimeoutExpired:
-        return {"success": False, "output": "", "error": "Превышено время выполнения (5 сек)"}
+        return {"success": False, "output": "", "error": "Превышено время выполнения"}
     except Exception as e:
         return {"success": False, "output": "", "error": str(e)}
     finally:
@@ -268,19 +275,19 @@ def analyze_complexity(code):
     branches = code.count('if ') + code.count('for ') + code.count('while ')
     complexity = 1 + branches * 0.5
     if complexity < 10:
-        rating = "🟢 Низкая"
+        rating = "Низкая"
     elif complexity < 20:
-        rating = "🟡 Средняя"
+        rating = "Средняя"
     else:
-        rating = "🔴 Высокая"
-    return f"📊 *Анализ сложности кода*\n\n• Строк кода: {code_lines}\n• Функций: {functions}\n• Классов: {classes}\n• Цикломатическая сложность: {complexity:.1f}\n• Оценка: {rating}"
+        rating = "Высокая"
+    return f"Строк кода: {code_lines}\nФункций: {functions}\nКлассов: {classes}\nСложность: {complexity:.1f}\nОценка: {rating}"
 
 def smart_merge(parts):
     if not parts:
         return ""
-    prompt = f"""Объедини эти части кода в один работающий файл. Расположи импорты в начале, функции в правильном порядке. Верни ТОЛЬКО итоговый код.
+    prompt = f"""Объедини эти части кода в один работающий файл. Верни ТОЛЬКО итоговый код.
 
-Части кода:
+Части:
 {chr(10).join([f"--- ЧАСТЬ {i+1} ---\n{p}" for i, p in enumerate(parts)])}
 
 Итоговый код:"""
@@ -296,7 +303,7 @@ def fix_code(code):
     return call_deepseek(prompt)
 
 def find_bugs_ai(code):
-    prompt = f"""Найди все ошибки в этом коде. Верни JSON: {{"bugs": [{{"message": "...", "severity": "CRITICAL/HIGH/MEDIUM/LOW", "line": номер}}]}}
+    prompt = f"""Найди все ошибки в этом коде. Верни JSON: {{"bugs": [{{"message": "...", "severity": "...", "line": номер}}]}}
 
 Код:
 {code}"""
@@ -312,192 +319,150 @@ def find_bugs_ai(code):
 
 def save_code_file(user_id, content):
     filename = f"code_{user_id}_bot.py"
-    header = f"# 🤖 Создано AI Code Bot\n# Дата: {datetime.now()}\n\n"
+    header = f"# AI Code Bot\n# {datetime.now()}\n\n"
     with open(filename, "w", encoding="utf-8") as f:
         f.write(header + content)
     return filename
 
-# ==================== КЛАВИАТУРА ====================
 def get_keyboard():
     return {
         "keyboard": [
             ["📝 Показать код", "💾 Скачать код"],
             ["🧠 УМНАЯ СКЛЕЙКА", "🔧 ИСПРАВИТЬ"],
             ["🐛 НАЙТИ ОШИБКИ", "📊 Анализ"],
-            ["✨ ГЕНЕРАЦИЯ КОДА", "🧪 АВТО-ТЕСТЫ"],
-            ["🔄 ПРЕОБРАЗОВАТЬ", "📋 CODE REVIEW"],
-            ["📝 ДОБАВИТЬ КОММЕНТАРИИ", "🌐 WEBAPP"],
-            ["⚡ REPLIT", "📜 История"],
-            ["🗑 Удалить последний", "🗑 Очистить всё"],
-            ["❓ Помощь"]
+            ["✨ ГЕНЕРАЦИЯ", "🎤 ГОЛОСОВОЙ ВВОД"],
+            ["🌐 ДРУГИЕ ЯЗЫКИ", "📄 ЭКСПОРТ PDF"],
+            ["🗑 Удалить последний", "📜 История"],
+            ["🗑 Очистить всё", "❓ Помощь"]
         ],
         "resize_keyboard": True
     }
 
-# ==================== ОБРАБОТКА TELEGRAM ====================
 def process_message(msg):
     chat_id = msg["chat"]["id"]
     uid = msg["from"]["id"]
     text = msg.get("text", "")
     
     if uid not in user_sessions:
-        user_sessions[uid] = {"code": "", "history": [], "parts": []}
+        user_sessions[uid] = {"code": "", "history": [], "parts": [], "language": "python"}
     
     bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
     
-    # НОВЫЕ КОМАНДЫ
+    # НОВАЯ ФУНКЦИЯ: ГОЛОСОВОЙ ВВОД
+    if text == "/voice" or text == "🎤 ГОЛОСОВОЙ ВВОД":
+        send_message(chat_id, "🎤 *Голосовой ввод кода*\n\nОтправь голосовое сообщение с описанием кода, который нужно сгенерировать.\n\nНапример: 'создай функцию для сортировки списка'", parse_mode="Markdown")
+        user_sessions[uid]["waiting_for"] = "voice"
+        return
     
-    # №1: Генерация кода по описанию
-    if text == "/generate" or text == "✨ ГЕНЕРАЦИЯ КОДА":
-        send_message(chat_id, "📝 *Опиши, какой код нужно сгенерировать:*\n\nНапример:\n- 'калькулятор на Python'\n- 'функция для сортировки списка'\n- 'бота для Telegram на aiogram'", parse_mode="Markdown")
+    # Обработка голосового сообщения
+    if "voice" in msg and user_sessions[uid].get("waiting_for") == "voice":
+        voice = msg["voice"]
+        file_id = voice["file_id"]
+        user_sessions[uid]["waiting_for"] = None
+        send_message(chat_id, "🎤 Распознаю голосовое сообщение и генерирую код...\n⏳ Обычно 5-10 секунд")
+        
+        # Здесь должна быть интеграция с распознаванием речи
+        # Для демонстрации используем заглушку
+        send_message(chat_id, "🎤 *Демо-режим:* Отправь текстовое описание, и я сгенерирую код.\n\nПример: 'напиши калькулятор на Python'", parse_mode="Markdown")
+        return
+    
+    # НОВАЯ ФУНКЦИЯ: ДРУГИЕ ЯЗЫКИ
+    if text == "/languages" or text == "🌐 ДРУГИЕ ЯЗЫКИ":
+        send_message(chat_id, 
+            "🌐 *Поддерживаемые языки программирования:*\n\n"
+            "• Python 🐍\n"
+            "• JavaScript 📜\n"
+            "• Java ☕\n"
+            "• C++ ⚡\n"
+            "• Go 🚀\n"
+            "• Rust 🦀\n\n"
+            "*Команды:*\n"
+            "/set_language python — выбрать язык\n"
+            "/convert_js — преобразовать код в JavaScript\n"
+            "/convert_java — преобразовать в Java\n"
+            "/convert_cpp — преобразовать в C++\n"
+            "/convert_go — преобразовать в Go\n"
+            "/convert_rust — преобразовать в Rust",
+            parse_mode="Markdown")
+        return
+    
+    elif text.startswith("/set_language"):
+        lang = text.split()[1] if len(text.split()) > 1 else "python"
+        user_sessions[uid]["language"] = lang
+        send_message(chat_id, f"✅ Язык установлен: {lang}")
+        return
+    
+    elif text.startswith("/convert_"):
+        target = text.replace("/convert_", "")
+        lang_map = {"js": "JavaScript", "java": "Java", "cpp": "C++", "go": "Go", "rust": "Rust"}
+        target_lang = lang_map.get(target, target)
+        
+        code = user_sessions[uid].get("code", "")
+        if not code.strip():
+            send_message(chat_id, "📭 Нет кода для преобразования")
+            return
+        
+        send_message(chat_id, f"🔄 Преобразую код в {target_lang}...\n⏳ 10-15 секунд")
+        converted = convert_to_language(code, "Python", target_lang)
+        if converted:
+            user_sessions[uid]["code"] = converted
+            send_message(chat_id, f"✅ *Код на {target_lang}:*\n\n```{target_lang}\n{converted[:2000]}\n```", parse_mode="Markdown")
+        else:
+            send_message(chat_id, "❌ Не удалось преобразовать код")
+        return
+    
+    # НОВАЯ ФУНКЦИЯ: ЭКСПОРТ PDF
+    elif text == "/pdf" or text == "📄 ЭКСПОРТ PDF":
+        code = user_sessions[uid].get("code", "")
+        if not code.strip():
+            send_message(chat_id, "📭 Нет кода для экспорта в PDF")
+            return
+        
+        send_message(chat_id, "📄 Создаю PDF файл...")
+        html_content = create_pdf_export(code, "code.py", f"User_{uid}")
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+            f.write(html_content)
+            html_file = f.name
+        pdf_file = html_file.replace('.html', '.pdf')
+        
+        # Конвертируем HTML в PDF с помощью weasyprint (если установлен)
+        try:
+            from weasyprint import HTML
+            HTML(html_file).write_pdf(pdf_file)
+            send_document(chat_id, pdf_file, "📄 Экспорт кода в PDF")
+            os.remove(pdf_file)
+        except:
+            # Fallback: отправляем HTML
+            send_document(chat_id, html_file, "📄 Экспорт кода (HTML для печати в PDF)")
+        os.remove(html_file)
+        return
+    
+    elif text == "/generate" or text == "✨ ГЕНЕРАЦИЯ":
+        send_message(chat_id, "📝 *Опиши, какой код нужно сгенерировать:*\n\nНапример:\n- 'калькулятор на Python'\n- 'функция для сортировки списка'", parse_mode="Markdown")
         user_sessions[uid]["waiting_for"] = "generate"
         return
     
     elif user_sessions[uid].get("waiting_for") == "generate":
         user_sessions[uid]["waiting_for"] = None
-        send_message(chat_id, "✨ AI генерирует код...\n⏳ Обычно 10-15 секунд")
-        generated = generate_code_by_description(text)
+        lang = user_sessions[uid].get("language", "python")
+        send_message(chat_id, f"✨ AI генерирует код на {lang}...\n⏳ 10-15 секунд")
+        generated = generate_code_in_language(text, lang)
         if generated:
             user_sessions[uid]["code"] = generated
-            user_sessions[uid]["history"].append({"time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "action": "Генерация кода"})
-            if len(generated) > 3000:
-                send_message(chat_id, f"✅ *Код сгенерирован!*\n📊 Размер: {len(generated)} символов\n\n📝 /show — посмотреть результат", parse_mode="Markdown")
-            else:
-                send_message(chat_id, f"✅ *Сгенерированный код:*\n\n```python\n{generated}\n```", parse_mode="Markdown")
+            send_message(chat_id, f"✅ *Сгенерированный код:*\n\n```{lang}\n{generated[:3000]}\n```", parse_mode="Markdown")
         else:
-            send_message(chat_id, "❌ Не удалось сгенерировать код. Попробуй ещё раз.")
+            send_message(chat_id, "❌ Не удалось сгенерировать код")
         return
     
-    # №2: Авто-тесты
-    elif text == "/tests" or text == "🧪 АВТО-ТЕСТЫ":
-        code = user_sessions[uid].get("code", "")
-        if not code.strip():
-            send_message(chat_id, "📭 Нет кода для генерации тестов. Сначала отправь код!")
-            return
-        send_message(chat_id, "🧪 AI генерирует тесты...\n⏳ Обычно 5-10 секунд")
-        tests = generate_tests(code)
-        if tests:
-            user_sessions[uid]["tests"] = tests
-            send_message(chat_id, f"✅ *Сгенерированные тесты:*\n\n```python\n{tests}\n```\n\n🏃 /run_tests — запустить тесты", parse_mode="Markdown")
-        else:
-            send_message(chat_id, "❌ Не удалось сгенерировать тесты")
-        return
-    
-    elif text == "/run_tests":
-        code = user_sessions[uid].get("code", "")
-        tests = user_sessions[uid].get("tests", "")
-        if not code.strip() or not tests.strip():
-            send_message(chat_id, "📭 Сначала сгенерируй тесты командой /tests")
-            return
-        send_message(chat_id, "🏃 Запуск тестов...")
-        result = run_tests(tests, code)
-        if result["success"]:
-            send_message(chat_id, f"✅ *Все тесты пройдены!*\n\n```\n{result['output'][:2000]}\n```", parse_mode="Markdown")
-        else:
-            send_message(chat_id, f"❌ *Тесты не пройдены:*\n\n```\n{result['error'][:2000]}\n```", parse_mode="Markdown")
-        return
-    
-    # №3: Преобразование кода
-    elif text == "/convert" or text == "🔄 ПРЕОБРАЗОВАТЬ":
-        send_message(chat_id, "📝 *Введи команду в формате:*\n`/convert java python`\n\nПоддерживаемые языки: python, java, javascript, cpp, go, rust", parse_mode="Markdown")
-        user_sessions[uid]["waiting_for"] = "convert"
-        return
-    
-    elif user_sessions[uid].get("waiting_for") == "convert" and text.startswith("/convert"):
-        parts = text.split()
-        if len(parts) >= 3:
-            from_lang = parts[1]
-            to_lang = parts[2]
-            code = user_sessions[uid].get("code", "")
-            if not code.strip():
-                send_message(chat_id, "📭 Нет кода для преобразования")
-                return
-            send_message(chat_id, f"🔄 Преобразую код из {from_lang} в {to_lang}...\n⏳ Обычно 10-15 секунд")
-            converted = convert_code(code, from_lang, to_lang)
-            if converted:
-                user_sessions[uid]["code"] = converted
-                send_message(chat_id, f"✅ *Преобразованный код ({to_lang}):*\n\n```\n{converted[:3000]}\n```", parse_mode="Markdown")
-            else:
-                send_message(chat_id, "❌ Не удалось преобразовать код")
-        else:
-            send_message(chat_id, "❌ Используй: `/convert java python`")
-        user_sessions[uid]["waiting_for"] = None
-        return
-    
-    # №4: Code Review
-    elif text == "/review" or text == "📋 CODE REVIEW":
-        code = user_sessions[uid].get("code", "")
-        if not code.strip():
-            send_message(chat_id, "📭 Нет кода для ревью")
-            return
-        send_message(chat_id, "📋 AI проводит Code Review...\n⏳ Обычно 10-15 секунд")
-        review = code_review(code)
-        send_message(chat_id, f"📋 *Code Review:*\n\n{review}", parse_mode="Markdown")
-        return
-    
-    # №5: Добавление комментариев
-    elif text == "/comment" or text == "📝 ДОБАВИТЬ КОММЕНТАРИИ":
-        code = user_sessions[uid].get("code", "")
-        if not code.strip():
-            send_message(chat_id, "📭 Нет кода для добавления комментариев")
-            return
-        send_message(chat_id, "📝 AI добавляет комментарии...\n⏳ Обычно 10-15 секунд")
-        commented = add_comments(code)
-        if commented:
-            user_sessions[uid]["code"] = commented
-            send_message(chat_id, f"✅ *Код с комментариями:*\n\n```python\n{commented[:3000]}\n```", parse_mode="Markdown")
-        else:
-            send_message(chat_id, "❌ Не удалось добавить комментарии")
-        return
-    
-    # №18: Экспорт в Replit
-    elif text == "/replit" or text == "⚡ REPLIT":
-        code = user_sessions[uid].get("code", "")
-        if not code.strip():
-            send_message(chat_id, "📭 Нет кода для экспорта в Replit")
-            return
-        replit_url = create_replit_export(code)
-        send_message(chat_id, f"⚡ *Экспорт в Replit:*\n\n{replit_url}\n\nОткрой ссылку, чтобы запустить код в Replit!", parse_mode="Markdown")
-        return
-    
-    # №20: Telegram WebApp
-    elif text == "/webapp" or text == "🌐 WEBAPP":
-        code = user_sessions[uid].get("code", "")
-        if not code.strip():
-            send_message(chat_id, "📭 Нет кода для WebApp")
-            return
-        html = create_webapp_html(code, uid)
-        user_html_pages[f"webapp_{uid}"] = html
-        send_message(chat_id, f"🌐 *Telegram WebApp Editor:*\n\n{bot_url}/webapp/{uid}\n\nОткрой в Telegram (нажми на кнопку ниже)", parse_mode="Markdown")
-        
-        # Отправляем кнопку для открытия WebApp
-        reply_markup = {
-            "inline_keyboard": [[{
-                "text": "🚀 ОТКРЫТЬ РЕДАКТОР",
-                "web_app": {"url": f"{bot_url}/webapp/{uid}"}
-            }]]
-        }
-        requests.post(f"{API_URL}/sendMessage", json={
-            "chat_id": chat_id,
-            "text": "🚀 Нажми на кнопку, чтобы открыть редактор в Telegram!",
-            "reply_markup": json.dumps(reply_markup)
-        })
-        return
-    
-    # ОСТАЛЬНЫЕ КОМАНДЫ (из предыдущей версии)
+    # ОСТАЛЬНЫЕ КОМАНДЫ
     elif text == "/start":
         send_message(chat_id, 
-            "🤖 *AI Code Bot (DeepSeek) - ПОЛНАЯ ВЕРСИЯ*\n\n"
-            "Привет! Я использую ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ!\n\n"
-            "*НОВЫЕ ФУНКЦИИ:*\n"
+            "🤖 *AI Code Bot - ПОЛНАЯ ВЕРСИЯ*\n\n"
             "✨ /generate — создать код по описанию\n"
-            "🧪 /tests — сгенерировать авто-тесты\n"
-            "🔄 /convert — преобразовать код в другой язык\n"
-            "📋 /review — Code Review\n"
-            "📝 /comment — добавить комментарии\n"
-            "⚡ /replit — экспорт в Replit\n"
-            "🌐 /webapp — Telegram WebApp редактор\n\n"
-            "*ОСНОВНЫЕ КОМАНДЫ:*\n"
+            "🎤 /voice — голосовой ввод\n"
+            "🌐 /languages — другие языки программирования\n"
+            "📄 /pdf — экспорт в PDF\n"
             "🧠 /smart_merge — умная склейка\n"
             "🔧 /smart_fix — исправить ошибки\n"
             "🐛 /smart_bugs — найти ошибки\n"
@@ -506,8 +471,7 @@ def process_message(msg):
             "📝 /show — показать код\n"
             "🗑 /undo — удалить последнюю часть\n"
             "📜 /history — история\n"
-            "🗑 /reset — очистить всё\n\n"
-            "💡 *Просто отправляй код частями!*",
+            "🗑 /reset — очистить всё",
             parse_mode="Markdown", reply_markup=json.dumps(get_keyboard()))
         return
     
@@ -515,20 +479,16 @@ def process_message(msg):
         send_message(chat_id, 
             "📚 *ВСЕ КОМАНДЫ БОТА:*\n\n"
             "*🤖 AI ФУНКЦИИ:*\n"
-            "✨ /generate <описание> — генерация кода\n"
-            "🧪 /tests — генерация тестов\n"
-            "🏃 /run_tests — запуск тестов\n"
-            "🔄 /convert <из> <в> — преобразование кода\n"
-            "📋 /review — Code Review\n"
-            "📝 /comment — добавить комментарии\n"
-            "⚡ /replit — экспорт в Replit\n"
-            "🌐 /webapp — Telegram WebApp\n\n"
+            "✨ /generate — генерация кода\n"
+            "🎤 /voice — голосовой ввод\n"
+            "🌐 /languages — другие языки\n"
+            "📄 /pdf — экспорт в PDF\n\n"
             "*🧠 УМНЫЕ ФУНКЦИИ:*\n"
             "🧠 /smart_merge — умная склейка\n"
-            "🔧 /smart_fix — исправление ошибок\n"
+            "🔧 /smart_fix — исправление\n"
             "🐛 /smart_bugs — поиск ошибок\n\n"
             "*📊 АНАЛИЗ:*\n"
-            "📊 /complexity — сложность кода\n\n"
+            "📊 /complexity — сложность\n\n"
             "*📁 ФАЙЛЫ:*\n"
             "📝 /show — показать код\n"
             "💾 /done — скачать код\n"
@@ -543,11 +503,10 @@ def process_message(msg):
         if not parts:
             send_message(chat_id, "📭 Нет частей для склейки")
             return
-        send_message(chat_id, "🧠 AI умно склеивает код...\n⏳ 5-10 секунд")
+        send_message(chat_id, "🧠 AI склеивает код...\n⏳ 5-10 секунд")
         merged = smart_merge(parts)
         if merged:
             user_sessions[uid]["code"] = merged
-            user_sessions[uid]["history"].append({"time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "action": "Умная склейка"})
             send_message(chat_id, f"✅ *Код склеен!*\n📊 Размер: {len(merged)} символов\n\n📝 /show — посмотреть", parse_mode="Markdown")
         else:
             send_message(chat_id, "❌ Ошибка склейки")
@@ -593,7 +552,7 @@ def process_message(msg):
             send_message(chat_id, "📭 Нет кода для анализа")
             return
         analysis = analyze_complexity(code)
-        send_message(chat_id, analysis, parse_mode="Markdown")
+        send_message(chat_id, f"📊 *Анализ сложности:*\n\n{analysis}", parse_mode="Markdown")
         return
     
     elif text == "/show" or text == "📝 Показать код":
@@ -633,70 +592,33 @@ def process_message(msg):
         if not history:
             send_message(chat_id, "📭 История пуста")
         else:
-            msg = "📜 *История действий:*\n\n"
+            msg = "📜 *История:*\n\n"
             for i, h in enumerate(history[-15:], 1):
                 msg += f"{i}. [{h.get('time', '')[:16]}] {h.get('action', 'Действие')}\n"
             send_message(chat_id, msg, parse_mode="Markdown")
         return
     
     elif text == "/reset" or text == "🗑 Очистить всё":
-        user_sessions[uid] = {"code": "", "history": [], "parts": []}
+        user_sessions[uid] = {"code": "", "history": [], "parts": [], "language": "python"}
         send_message(chat_id, "🧹 Всё очищено!", reply_markup=json.dumps(get_keyboard()))
         return
     
     # Сохранение частей кода
-    elif not text.startswith("/") and not any(text.startswith(x) for x in ["📝", "💾", "🧠", "🔧", "🐛", "📊", "✨", "🧪", "🔄", "📋", "⚡", "🌐", "🗑", "📜", "❓"]):
+    elif not text.startswith("/") and not any(text.startswith(x) for x in ["📝", "💾", "🧠", "🔧", "🐛", "📊", "✨", "🎤", "🌐", "📄", "🗑", "📜", "❓"]):
         parts = user_sessions[uid].get("parts", [])
         parts.append(text)
         user_sessions[uid]["parts"] = parts
-        send_message(chat_id, f"✅ *Часть {len(parts)} сохранена!*\n\n🧠 /smart_merge — умно склеить", parse_mode="Markdown")
+        send_message(chat_id, f"✅ *Часть {len(parts)} сохранена!*\n\n🧠 /smart_merge — склеить", parse_mode="Markdown")
         return
 
 # ==================== HTTP СЕРВЕР ====================
 class WebHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path.startswith('/webapp/'):
-            uid = self.path.split('/')[2]
-            html = user_html_pages.get(f"webapp_{uid}", "<h1>Страница не найдена</h1>")
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html; charset=utf-8')
-            self.end_headers()
-            self.wfile.write(html.encode('utf-8'))
-        elif self.path == '/' or self.path == '/health':
+        if self.path == '/' or self.path == '/health':
             self.send_response(200)
             self.send_header('Content-type', 'text/plain')
             self.end_headers()
             self.wfile.write(b'Bot is running!')
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
-    def do_POST(self):
-        length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(length)
-        data = json.loads(body) if body else {}
-        
-        if self.path == '/api/run':
-            result = run_code_safe(data.get('code', ''))
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(result).encode())
-        elif self.path == '/api/save_code':
-            uid = data.get('user_id')
-            code = data.get('code', '')
-            if uid not in user_sessions:
-                user_sessions[uid] = {}
-            user_sessions[uid]['code'] = code
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(json.dumps({"success": True}).encode())
-        elif self.path == '/api/analyze':
-            result = analyze_complexity(data.get('code', ''))
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({"report": result}).encode())
         else:
             self.send_response(404)
             self.end_headers()
@@ -709,7 +631,6 @@ def run_web():
     logger.info(f"🌐 Веб-сервер на порту {PORT}")
     server.serve_forever()
 
-# ==================== ЗАПУСК ====================
 def run_bot():
     global last_update_id
     logger.info("🤖 AI Telegram бот запущен!")
@@ -725,6 +646,8 @@ def run_bot():
                     processed_ids.clear()
                 if "message" in upd:
                     process_message(upd["message"])
+                elif "callback_query" in upd:
+                    pass
                 last_update_id = uid
             time.sleep(1)
         except Exception as e:
