@@ -21,55 +21,198 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 user_sessions = {}
+user_html_pages = {}
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 processed_ids = set()
 last_update_id = 0
 
+# ==================== ФУНКЦИЯ СОЗДАНИЯ HTML-СТРАНИЦЫ ====================
+def generate_html_page(code, filename="code.py", page_title="Мой код"):
+    """Создаёт красивую HTML-страницу с подсветкой кода"""
+    
+    # Экранируем код для HTML
+    escaped_code = code.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    
+    # Определяем язык для подсветки
+    language = "python"
+    if filename.endswith('.html'):
+        language = "html"
+    elif filename.endswith('.css'):
+        language = "css"
+    elif filename.endswith('.js'):
+        language = "javascript"
+    elif filename.endswith('.json'):
+        language = "json"
+    elif filename.endswith('.md'):
+        language = "markdown"
+    
+    html_template = f'''<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{page_title} - AI Code Bot</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script>hljs.highlightAll();</script>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            font-family: 'Segoe UI', monospace;
+            min-height: 100vh;
+            padding: 40px 20px;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+        }}
+        .header {{
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 20px 30px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }}
+        .header h1 {{
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }}
+        .header p {{
+            color: #888;
+            font-size: 14px;
+        }}
+        .info {{
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }}
+        .info-item {{
+            background: rgba(255,255,255,0.1);
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+        }}
+        .code-block {{
+            background: #1e1e1e;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.1);
+        }}
+        .code-header {{
+            background: #2d2d2d;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #444;
+        }}
+        .filename {{
+            color: #667eea;
+            font-weight: bold;
+        }}
+        .copy-btn {{
+            background: #0e639c;
+            border: none;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+        }}
+        .copy-btn:hover {{
+            background: #1177bb;
+        }}
+        pre {{
+            margin: 0;
+            padding: 20px;
+            overflow-x: auto;
+        }}
+        code {{
+            font-family: 'Fira Code', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+        }}
+        .footer {{
+            text-align: center;
+            margin-top: 30px;
+            color: #666;
+            font-size: 12px;
+        }}
+        .badge {{
+            display: inline-block;
+            background: rgba(102,126,234,0.2);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            color: #667eea;
+        }}
+        @media (max-width: 768px) {{
+            body {{ padding: 20px 15px; }}
+            .header h1 {{ font-size: 22px; }}
+            pre {{ padding: 15px; }}
+            code {{ font-size: 12px; }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📄 {page_title}</h1>
+            <p>Сгенерировано AI Code Bot • {datetime.now().strftime("%d.%m.%Y %H:%M")}</p>
+            <div class="info">
+                <span class="info-item">📁 Файл: {filename}</span>
+                <span class="info-item">🔤 Язык: {language.upper()}</span>
+                <span class="info-item">📏 Строк: {len(code.splitlines())}</span>
+                <span class="info-item">📦 Размер: {len(code)} символов</span>
+            </div>
+        </div>
+        <div class="code-block">
+            <div class="code-header">
+                <span class="filename">📄 {filename}</span>
+                <button class="copy-btn" onclick="copyCode()">📋 Копировать код</button>
+            </div>
+            <pre><code class="language-{language}">{escaped_code}</code></pre>
+        </div>
+        <div class="footer">
+            <span class="badge">🤖 Создано с помощью AI Code Bot</span>
+        </div>
+    </div>
+    <script>
+        function copyCode() {{
+            const code = document.querySelector('code').innerText;
+            navigator.clipboard.writeText(code);
+            const btn = document.querySelector('.copy-btn');
+            btn.innerHTML = '✅ Скопировано!';
+            setTimeout(() => btn.innerHTML = '📋 Копировать код', 2000);
+        }}
+    </script>
+</body>
+</html>'''
+    
+    return html_template
+
 # ==================== ФУНКЦИЯ РАСПОЗНАВАНИЯ ФАЙЛОВ ====================
-def parse_files_from_code(text):
-    """Распознаёт множество файлов из одного сообщения"""
+def detect_all_files_from_code(text):
+    """Обнаруживает все возможные файлы в сообщении"""
     files = {}
     
-    # Паттерны для разных типов файлов
-    patterns = {
-        r'```dockerfile\n(.*?)```': 'Dockerfile',
-        r'```python\n(.*?)```': None,  # Определяется по имени
-        r'```\n(.*?)```': None,
-    }
-    
-    # Ищем файлы по маркерам
     # Формат: ### Файл: app.py ```python ... ```
     file_pattern = r'###\s*Файл:\s*([^\s]+)\s*```(?:\w+)?\n(.*?)```'
     matches = re.findall(file_pattern, text, re.DOTALL | re.IGNORECASE)
     for filename, content in matches:
         files[filename.strip()] = content.strip()
     
-    # Поиск по именам файлов в тексте
-    known_files = [
-        'app.py', 'bot.py', 'main.py', 'requirements.txt', 
-        'Dockerfile', 'runtime.txt', '.dockerignore', 'docker-compose.yml',
-        'index.html', 'style.css', 'script.js', 'README.md', '.env', 'config.json'
-    ]
-    
-    for filename in known_files:
-        # Ищем содержимое файла после имени
-        escaped_name = re.escape(filename)
-        pattern = rf'{escaped_name}\s*\n```(?:\w+)?\n(.*?)```'
-        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-        if match:
-            files[filename] = match.group(1).strip()
-    
-    return files
-
-def detect_all_files_from_code(text):
-    """Обнаруживает все возможные файлы в сообщении"""
-    files = {}
-    
-    # Разделяем на блоки кода
+    # Поиск по блокам кода
     code_blocks = re.findall(r'```(\w*)\n(.*?)```', text, re.DOTALL)
+    known_files = ['app.py', 'main.py', 'requirements.txt', 'Dockerfile', 'index.html', 'style.css', 'script.js', 'README.md']
     
     for lang, content in code_blocks:
-        # Пытаемся определить имя файла по языку
         if lang == 'python' or lang == 'py':
             # Ищем имя файла перед блоком
             before = text[:text.find(f'```{lang}')]
@@ -78,24 +221,14 @@ def detect_all_files_from_code(text):
                 files[file_match.group(1)] = content.strip()
             else:
                 files[f'script_{len(files)}.py'] = content.strip()
-        elif lang == 'dockerfile' or 'docker' in lang.lower():
+        elif lang == 'dockerfile':
             files['Dockerfile'] = content.strip()
-        elif lang == 'txt' or 'requirements' in lang.lower():
-            files['requirements.txt'] = content.strip()
         elif lang == 'html':
             files['index.html'] = content.strip()
         elif lang == 'css':
             files['style.css'] = content.strip()
-        elif lang == 'js' or lang == 'javascript':
+        elif lang == 'js':
             files['script.js'] = content.strip()
-        elif lang == 'json':
-            files['config.json'] = content.strip()
-        elif lang == 'md':
-            files['README.md'] = content.strip()
-        elif lang == 'ignore' or 'gitignore' in lang.lower():
-            files['.dockerignore'] = content.strip()
-        else:
-            files[f'file_{len(files)}.txt'] = content.strip()
     
     return files
 
@@ -118,11 +251,9 @@ VIEW_CODE_HTML = '''<!DOCTYPE html>
         .code-block { background: #1e1e1e; border: 1px solid #333; border-radius: 10px; overflow: hidden; }
         .code-header { background: #2d2d2d; padding: 10px 15px; font-size: 14px; border-bottom: 1px solid #333; }
         pre { margin: 0; padding: 15px; overflow-x: auto; font-size: 13px; }
-        code { font-family: monospace; }
         .actions { margin-top: 20px; display: flex; gap: 10px; }
-        .btn { padding: 10px 20px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 8px; text-decoration: none; display: inline-block; }
+        .btn { padding: 10px 20px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 8px; }
         .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
-        .status { background: #2d2d2d; padding: 10px; border-radius: 8px; margin-top: 20px; text-align: center; color: #888; }
     </style>
 </head>
 <body>
@@ -137,10 +268,9 @@ VIEW_CODE_HTML = '''<!DOCTYPE html>
         <pre><code id="codeContent"></code></pre>
     </div>
     <div class="actions">
-        <button class="btn" onclick="downloadCurrent()">📥 Скачать текущий файл</button>
-        <button class="btn btn-primary" onclick="downloadAll()">📦 Скачать все файлы (ZIP)</button>
+        <button class="btn" onclick="downloadCurrent()">📥 Скачать</button>
+        <button class="btn btn-primary" onclick="downloadAll()">📦 Скачать ZIP</button>
     </div>
-    <div class="status" id="status">⚡ Готов к работе</div>
 </div>
 <script>
 const USER_ID = {{ user_id }};
@@ -159,12 +289,10 @@ async function loadFiles() {
             btn.onclick = () => showFile(name, content);
             fileList.appendChild(btn);
         }
-        // Показываем первый файл
         const first = Object.entries(data.files)[0];
         if (first) showFile(first[0], first[1]);
     } else {
-        fileList.innerHTML = '<span style="color:#888;">Нет файлов. Отправьте код в Telegram бота!</span>';
-        document.getElementById('codeContent').innerHTML = '# Нет файлов';
+        fileList.innerHTML = '<span style="color:#888;">Нет файлов</span>';
     }
 }
 
@@ -182,28 +310,15 @@ async function downloadCurrent() {
     const res = await fetch(`${API_URL}/api/files?user_id=${USER_ID}`);
     const data = await res.json();
     const content = data.files[currentName];
-    if (content) {
-        const blob = new Blob([content], {type: 'text/plain'});
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = currentName;
-        a.click();
-        URL.revokeObjectURL(a.href);
-        document.getElementById('status').innerHTML = '✅ Файл скачан!';
-        setTimeout(() => document.getElementById('status').innerHTML = '⚡ Готов к работе', 2000);
-    }
+    const blob = new Blob([content], {type: 'text/plain'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = currentName;
+    a.click();
 }
 
 async function downloadAll() {
-    const res = await fetch(`${API_URL}/api/export_zip?user_id=${USER_ID}`);
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `project_${USER_ID}.zip`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    document.getElementById('status').innerHTML = '📦 ZIP архив скачан!';
-    setTimeout(() => document.getElementById('status').innerHTML = '⚡ Готов к работе', 2000);
+    window.location = `${API_URL}/api/export_zip?user_id=${USER_ID}`;
 }
 
 loadFiles();
@@ -229,9 +344,8 @@ WEB_EDITOR_HTML = '''<!DOCTYPE html>
         button { padding: 6px 12px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 4px; font-size: 12px; }
         button:hover { background: #1177bb; }
         button.primary { background: linear-gradient(135deg, #667eea, #764ba2); }
-        button.danger { background: #dc3545; }
-        #editor { height: calc(100vh - 120px); }
-        .status { background: #1e1e1e; color: #888; padding: 5px 10px; font-size: 11px; display: flex; justify-content: space-between; border-top: 1px solid #333; }
+        #editor { height: calc(100vh - 100px); }
+        .status { background: #1e1e1e; color: #888; padding: 5px 10px; font-size: 11px; border-top: 1px solid #333; }
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/editor/editor.main.min.css">
 </head>
@@ -240,14 +354,13 @@ WEB_EDITOR_HTML = '''<!DOCTYPE html>
     <div class="logo">🤖 AI Code Editor</div>
     <select id="fileSelect" class="file-select" onchange="switchFile()"></select>
     <div class="toolbar">
-        <button onclick="saveCurrentFile()">💾 Сохранить</button>
+        <button onclick="saveFile()">💾 Сохранить</button>
         <button onclick="runCode()">▶️ Запустить</button>
         <button onclick="analyzeCode()">📊 Анализ</button>
         <button onclick="findBugs()">🐛 Ошибки</button>
         <button onclick="fixCode()">🔧 Исправить</button>
-        <button onclick="newFile()">➕ Новый файл</button>
-        <button onclick="deleteFile()" class="danger">🗑 Удалить файл</button>
-        <button onclick="downloadCurrent()">📥 Скачать</button>
+        <button onclick="newFile()">➕ Новый</button>
+        <button onclick="deleteFile()">🗑 Удалить</button>
     </div>
 </div>
 <div id="editor"></div>
@@ -255,8 +368,7 @@ WEB_EDITOR_HTML = '''<!DOCTYPE html>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.js"></script>
 <script>
-let editor;
-let currentFile = null;
+let editor, currentFile = null;
 let filesList = {};
 const USER_ID = {{ user_id }};
 const API_URL = window.location.origin;
@@ -280,7 +392,7 @@ require(['vs/editor/editor.main'], function() {
 async function loadFiles() {
     const res = await fetch(`${API_URL}/api/files?user_id=${USER_ID}`);
     const data = await res.json();
-    filesList = data.files || {};
+    filesList = data.files || {'main.py': '# Ваш код'};
     
     const select = document.getElementById('fileSelect');
     select.innerHTML = '';
@@ -290,13 +402,6 @@ async function loadFiles() {
         option.textContent = name;
         select.appendChild(option);
     }
-    
-    if (Object.keys(filesList).length === 0) {
-        filesList = {'main.py': '# Напишите свой код здесь\nprint("Hello, World!")'};
-        await saveAllFiles();
-        loadFiles();
-    }
-    
     currentFile = select.value || Object.keys(filesList)[0];
     editor.setValue(filesList[currentFile] || '');
     setLanguage(currentFile);
@@ -304,32 +409,26 @@ async function loadFiles() {
 
 function setLanguage(filename) {
     const ext = filename.split('.').pop();
-    const langs = {py:'python', js:'javascript', html:'html', css:'css', json:'json', md:'markdown', txt:'text'};
+    const langs = {py:'python', js:'javascript', html:'html', css:'css', json:'json'};
     monaco.editor.setModelLanguage(editor.getModel(), langs[ext] || 'python');
 }
 
 async function switchFile() {
-    const select = document.getElementById('fileSelect');
     filesList[currentFile] = editor.getValue();
-    currentFile = select.value;
+    currentFile = document.getElementById('fileSelect').value;
     editor.setValue(filesList[currentFile] || '');
     setLanguage(currentFile);
-    document.getElementById('stats').innerHTML = `📝 ${editor.getValue().length}`;
 }
 
-async function saveCurrentFile() {
+async function saveFile() {
     filesList[currentFile] = editor.getValue();
-    await saveAllFiles();
-    document.getElementById('status').innerHTML = '✅ Сохранено!';
-    setTimeout(() => document.getElementById('status').innerHTML = '⚡ Готов', 1500);
-}
-
-async function saveAllFiles() {
     await fetch(`${API_URL}/api/save_files`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({user_id: USER_ID, files: filesList})
     });
+    document.getElementById('status').innerHTML = '✅ Сохранено!';
+    setTimeout(() => document.getElementById('status').innerHTML = '⚡ Готов', 1500);
 }
 
 async function runCode() {
@@ -340,76 +439,48 @@ async function runCode() {
         body: JSON.stringify({code: code})
     });
     const data = await res.json();
-    if (data.success) {
-        alert('✅ Выполнено!\n\n' + (data.output || '(нет вывода)'));
-    } else {
-        alert('❌ Ошибка:\n\n' + data.error);
-    }
+    alert(data.success ? '✅ Выполнено!\n\n' + (data.output || '(нет вывода)') : '❌ Ошибка:\n\n' + data.error);
 }
 
 async function analyzeCode() {
     const code = filesList['main.py'] || editor.getValue();
-    const res = await fetch(`${API_URL}/api/analyze`, {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: code})
-    });
+    const res = await fetch(`${API_URL}/api/analyze`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({code: code})});
     const data = await res.json();
     alert('📊 ' + data.report);
 }
 
 async function findBugs() {
     const code = filesList['main.py'] || editor.getValue();
-    const res = await fetch(`${API_URL}/api/bugs`, {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: code})
-    });
+    const res = await fetch(`${API_URL}/api/bugs`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({code: code})});
     const data = await res.json();
     alert('🐛 ' + data.report);
 }
 
 async function fixCode() {
     const code = filesList['main.py'] || editor.getValue();
-    const res = await fetch(`${API_URL}/api/fix`, {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({code: code})
-    });
+    const res = await fetch(`${API_URL}/api/fix`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({code: code})});
     const data = await res.json();
     filesList['main.py'] = data.code;
     editor.setValue(data.code);
-    await saveAllFiles();
+    await saveFile();
     alert(data.report);
 }
 
 async function newFile() {
-    const name = prompt('Введите имя файла (например: app.py, index.html):');
+    const name = prompt('Имя файла (app.py, index.html):');
     if (name && !filesList[name]) {
-        filesList[name] = '# Новый файл';
-        await saveAllFiles();
+        filesList[name] = '';
+        await saveFile();
         loadFiles();
-        document.getElementById('fileSelect').value = name;
-        currentFile = name;
-        editor.setValue(filesList[name]);
-    } else if (filesList[name]) {
-        alert('Файл уже существует!');
     }
 }
 
 async function deleteFile() {
-    if (confirm(`Удалить файл ${currentFile}?`)) {
+    if (confirm('Удалить файл?')) {
         delete filesList[currentFile];
-        await saveAllFiles();
+        await saveFile();
         loadFiles();
     }
-}
-
-function downloadCurrent() {
-    const content = filesList[currentFile];
-    const blob = new Blob([content], {type: 'text/plain'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = currentFile;
-    a.click();
-    URL.revokeObjectURL(a.href);
 }
 </script>
 </body>
@@ -417,32 +488,18 @@ function downloadCurrent() {
 '''
 
 # ==================== КЛАВИАТУРА ====================
-def get_main_keyboard():
+def get_keyboard():
     return {
         "keyboard": [
             ["📝 Показать код", "💾 Скачать код"],
             ["🔧 ИСПРАВИТЬ", "🐛 Ошибки"],
             ["🏃 Запустить", "📊 Анализ"],
             ["📁 Файлы", "➕ Добавить файл"],
-            ["🌐 Веб-редактор", "🗑 Очистить всё"],
-            ["❓ Помощь"]
+            ["🌐 Веб-редактор", "🌍 Опубликовать сайт"],
+            ["🗑 Очистить всё", "❓ Помощь"]
         ],
         "resize_keyboard": True
     }
-
-def get_files_keyboard(files):
-    keyboard = []
-    row = []
-    for name in list(files.keys())[:8]:
-        row.append({"text": f"📄 {name[:20]}"})
-        if len(row) == 2:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-    keyboard.append([{"text": "📦 Экспорт ZIP"}, {"text": "🔙 Главное меню"}])
-    keyboard.append([{"text": "➕ Добавить файл"}, {"text": "🗑 Удалить файл"}])
-    return {"inline_keyboard": keyboard}
 
 # ==================== ФУНКЦИИ ====================
 def send_message(chat_id, text, parse_mode=None, reply_markup=None):
@@ -456,15 +513,6 @@ def send_message(chat_id, text, parse_mode=None, reply_markup=None):
     except Exception as e:
         logger.error(f"Ошибка: {e}")
 
-def send_web_button(chat_id, user_id):
-    bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
-    rm = {"inline_keyboard": [[{"text": "🌐 ОТКРЫТЬ РЕДАКТОР", "web_app": {"url": f"{bot_url}/web/{user_id}"}}]]}
-    send_message(chat_id, "🌐 Нажми на кнопку, чтобы открыть редактор!", reply_markup=json.dumps(rm))
-
-def send_view_button(chat_id, user_id):
-    bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
-    send_message(chat_id, f"🌐 *Просмотр кода в браузере:*\n{bot_url}/view/{user_id}", parse_mode="Markdown")
-
 def get_updates():
     global last_update_id
     params = {"timeout": 30}
@@ -473,8 +521,7 @@ def get_updates():
     try:
         r = requests.get(f"{API_URL}/getUpdates", params=params, timeout=35)
         return r.json().get("result", [])
-    except Exception as e:
-        logger.error(f"Ошибка getUpdates: {e}")
+    except:
         return []
 
 def auto_fix_code(code):
@@ -493,20 +540,19 @@ def auto_fix_code(code):
 def find_bugs(code):
     bugs = []
     if '/ 0' in code or '/0' in code:
-        bugs.append("❌ Деление на ноль [КРИТИЧЕСКАЯ]")
+        bugs.append("❌ Деление на ноль")
     if 'eval(' in code:
-        bugs.append("❌ Использование eval() [ВЫСОКАЯ]")
+        bugs.append("❌ eval()")
     try:
         compile(code, '<string>', 'exec')
     except SyntaxError as e:
-        bugs.append(f"❌ Синтаксис: {e.msg} [КРИТИЧЕСКАЯ]")
-    return bugs if bugs else ["✅ Ошибок не найдено!"]
+        bugs.append(f"❌ {e.msg}")
+    return bugs if bugs else ["✅ Ошибок нет"]
 
 def analyze_complexity(code):
     lines = code.split('\n')
     code_lines = len([l for l in lines if l.strip() and not l.strip().startswith('#')])
-    functions = code.count('def ')
-    return f"Строк кода: {code_lines} | Функций: {functions}"
+    return f"Строк: {code_lines} | Функций: {code.count('def ')}"
 
 def run_code_safe(code):
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
@@ -537,6 +583,14 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
             self.wfile.write(VIEW_CODE_HTML.replace('{{ user_id }}', str(user_id)).encode('utf-8'))
+        
+        elif parsed.path.startswith('/publish/'):
+            page_id = parsed.path.split('/')[2]
+            html = user_html_pages.get(page_id, "<h1>Страница не найдена</h1>")
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(html.encode('utf-8'))
         
         elif parsed.path == '/' or parsed.path == '/health':
             self.send_response(200)
@@ -630,24 +684,23 @@ def process_message(msg):
     text = msg.get("text", "")
     
     if uid not in user_sessions:
-        user_sessions[uid] = {"files": {"main.py": '# Код пуст\nprint("Hello, World!")'}, "current_file": "main.py"}
+        user_sessions[uid] = {"files": {"main.py": '# Ваш код\nprint("Hello, World!")'}, "current_file": "main.py"}
     
     bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
     
-    # Распознаём несколько файлов из сообщения
+    # Распознаём несколько файлов
     files_from_msg = detect_all_files_from_code(text)
     if files_from_msg:
         for filename, content in files_from_msg.items():
             user_sessions[uid]["files"][filename] = content
-        user_sessions[uid]["current_file"] = list(files_from_msg.keys())[0]
         send_message(chat_id, f"✅ Распознано {len(files_from_msg)} файлов:\n" + "\n".join(f"• {name}" for name in files_from_msg.keys()))
         return
     
     if text == "/start":
         send_message(chat_id, 
             "🤖 *AI Code Bot*\n\n"
-            "Привет! Я помогаю писать и исправлять код!\n\n"
-            "*Основные команды:*\n"
+            "Привет! Я помогаю писать и публиковать код!\n\n"
+            "*Команды:*\n"
             "📝 /show — показать код\n"
             "💾 /done — скачать код\n"
             "🔧 /fix — исправить ошибки\n"
@@ -656,106 +709,56 @@ def process_message(msg):
             "📊 /complexity — анализ сложности\n"
             "📁 /files — управление файлами\n"
             "➕ /add_file — добавить файл\n"
-            "🗑 /delete_file — удалить файл\n"
             "🌐 /web — веб-редактор\n"
-            "🌍 /view — просмотр кода в браузере\n"
+            "🌍 /publish — ОПУБЛИКОВАТЬ САЙТ\n"
+            "🗑 /reset — очистить всё\n"
             "❓ /help — помощь",
             parse_mode="Markdown",
-            reply_markup=json.dumps(get_main_keyboard()))
+            reply_markup=json.dumps(get_keyboard()))
     
     elif text == "/web" or text == "🌐 Веб-редактор":
-        send_web_button(chat_id, uid)
+        send_message(chat_id, f"🎨 *Веб-редактор:*\n{bot_url}/web/{uid}", parse_mode="Markdown")
     
-    elif text == "/view" or text == "🌍 Просмотр":
-        send_view_button(chat_id, uid)
-    
-    elif text == "📁 Файлы" or text == "/files":
+    elif text == "/publish" or text == "🌍 Опубликовать сайт":
         files = user_sessions[uid].get("files", {})
-        if not files:
-            send_message(chat_id, "📭 Нет файлов. Отправьте код или используйте /add_file")
-        else:
-            file_list = "\n".join([f"• `{name}`" for name in files.keys()])
-            send_message(chat_id, f"📁 *Ваши файлы:*\n{file_list}\n\n📄 Текущий: `{user_sessions[uid].get('current_file', 'main.py')}`", parse_mode="Markdown")
-            send_message(chat_id, "Выберите файл для редактирования:", reply_markup=json.dumps(get_files_keyboard(files)))
-    
-    elif text == "➕ Добавить файл" or text == "/add_file":
-        send_message(chat_id, "📝 Введите имя файла для добавления (например: `app.py`, `index.html`):", parse_mode="Markdown")
-    
-    elif text == "🗑 Удалить файл" or text == "/delete_file":
-        files = user_sessions[uid].get("files", {})
-        if not files:
-            send_message(chat_id, "📭 Нет файлов для удаления")
-        else:
-            send_message(chat_id, "🗑 Выберите файл для удаления:", reply_markup=json.dumps(get_files_keyboard(files)))
-    
-    elif text.startswith("/switch_file "):
-        filename = text.split(" ", 1)[1]
-        files = user_sessions[uid].get("files", {})
-        if filename in files:
-            user_sessions[uid]["current_file"] = filename
-            send_message(chat_id, f"✅ Переключён на файл: `{filename}`", parse_mode="Markdown")
-        else:
-            send_message(chat_id, f"❌ Файл `{filename}` не найден", parse_mode="Markdown")
-    
-    elif text == "📦 Экспорт ZIP":
-        files = user_sessions[uid].get("files", {})
-        if not files:
-            send_message(chat_id, "📭 Нет файлов для экспорта")
+        current = user_sessions[uid].get("current_file", "main.py")
+        code = files.get(current, "")
+        
+        if not code.strip():
+            send_message(chat_id, "❌ Нет кода для публикации!")
             return
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for name, content in files.items():
-                zf.writestr(name, content)
-        zip_buffer.seek(0)
-        with open(f"project_{uid}.zip", "wb") as f:
-            f.write(zip_buffer.getvalue())
-        with open(f"project_{uid}.zip", "rb") as f:
-            requests.post(f"{API_URL}/sendDocument", data={"chat_id": chat_id, "caption": "📦 Архив всех файлов"}, files={"document": f})
-        os.remove(f"project_{uid}.zip")
-    
-    elif text == "🔙 Главное меню":
-        send_message(chat_id, "🔙 Возврат в главное меню", reply_markup=json.dumps(get_main_keyboard()))
-    
-    elif text.startswith("📄 "):
-        filename = text.replace("📄 ", "")
-        files = user_sessions[uid].get("files", {})
-        if filename in files:
-            user_sessions[uid]["current_file"] = filename
-            code = files[filename]
-            lang = "python" if filename.endswith('.py') else "text"
-            send_message(chat_id, f"📄 *Файл:* `{filename}`\n```{lang}\n{code[:3000]}\n```", parse_mode="Markdown")
-        else:
-            send_message(chat_id, f"❌ Файл не найден")
-    
-    elif text.startswith("➕ ") and len(text) > 2:
-        filename = text[2:]
-        if uid not in user_sessions:
-            user_sessions[uid] = {"files": {}}
-        user_sessions[uid]["files"][filename] = f"# Файл {filename}\n"
-        user_sessions[uid]["current_file"] = filename
-        send_message(chat_id, f"✅ Файл `{filename}` создан!", parse_mode="Markdown")
+        
+        # Создаём HTML-страницу
+        page_id = f"{uid}_{int(time.time())}"
+        html_page = generate_html_page(code, current, f"Мой код - {current}")
+        user_html_pages[page_id] = html_page
+        
+        send_message(chat_id, 
+            f"✅ *Код опубликован!*\n\n"
+            f"🔗 *Ссылка на сайт:*\n{bot_url}/publish/{page_id}\n\n"
+            f"📄 Файл: `{current}`\n"
+            f"📊 Размер: {len(code)} символов\n\n"
+            f"💡 Эту ссылку можно отправить кому угодно!",
+            parse_mode="Markdown")
     
     elif text == "📝 Показать код" or text == "/show":
         files = user_sessions[uid].get("files", {})
         current = user_sessions[uid].get("current_file", "main.py")
         code = files.get(current, "")
-        if not code.strip():
-            send_message(chat_id, f"📭 Файл `{current}` пуст. Отправьте код или используйте /add_file", parse_mode="Markdown")
-        else:
-            lang = "python" if current.endswith('.py') else "text"
-            send_message(chat_id, f"📄 *Файл:* `{current}`\n```{lang}\n{code[:3500]}\n```", parse_mode="Markdown")
+        lang = "python" if current.endswith('.py') else "text"
+        send_message(chat_id, f"📄 *{current}*\n```{lang}\n{code[:3000]}\n```", parse_mode="Markdown")
     
     elif text == "💾 Скачать код" or text == "/done":
         files = user_sessions[uid].get("files", {})
         current = user_sessions[uid].get("current_file", "main.py")
         code = files.get(current, "")
         if not code.strip():
-            send_message(chat_id, f"❌ Файл `{current}` пуст", parse_mode="Markdown")
+            send_message(chat_id, "❌ Нет кода")
             return
         with open(current, "w") as f:
             f.write(code)
         with open(current, "rb") as f:
-            requests.post(f"{API_URL}/sendDocument", data={"chat_id": chat_id, "caption": f"✅ {current}"}, files={"document": f})
+            requests.post(f"{API_URL}/sendDocument", data={"chat_id": chat_id}, files={"document": f})
         os.remove(current)
     
     elif text == "🔧 ИСПРАВИТЬ" or text == "/fix":
@@ -763,90 +766,89 @@ def process_message(msg):
         current = user_sessions[uid].get("current_file", "main.py")
         code = files.get(current, "")
         if not code.strip():
-            send_message(chat_id, f"📭 Нет кода в файле `{current}`", parse_mode="Markdown")
+            send_message(chat_id, "Нет кода")
             return
-        send_message(chat_id, "🔧 Исправляю код...")
         fixed, report = auto_fix_code(code)
         if fixed != code:
             user_sessions[uid]["files"][current] = fixed
             send_message(chat_id, report)
         else:
-            send_message(chat_id, "✅ Код уже в хорошем состоянии!")
+            send_message(chat_id, "✅ Код уже хороший")
     
     elif text == "🐛 Ошибки" or text == "/bugs":
         files = user_sessions[uid].get("files", {})
         current = user_sessions[uid].get("current_file", "main.py")
         code = files.get(current, "")
-        if not code.strip():
-            send_message(chat_id, f"📭 Нет кода в файле `{current}`", parse_mode="Markdown")
-            return
         bugs = find_bugs(code)
-        send_message(chat_id, "🔍 *Результаты проверки:*\n\n" + "\n".join(bugs), parse_mode="Markdown")
+        send_message(chat_id, "\n".join(bugs))
     
     elif text == "📊 Анализ" or text == "/complexity":
         files = user_sessions[uid].get("files", {})
         current = user_sessions[uid].get("current_file", "main.py")
         code = files.get(current, "")
-        if not code.strip():
-            send_message(chat_id, f"📭 Нет кода в файле `{current}`", parse_mode="Markdown")
-            return
-        analysis = analyze_complexity(code)
-        send_message(chat_id, f"📊 *Анализ файла `{current}`:*\n{analysis}", parse_mode="Markdown")
+        send_message(chat_id, analyze_complexity(code))
     
     elif text == "🏃 Запустить" or text == "/run":
         files = user_sessions[uid].get("files", {})
         current = user_sessions[uid].get("current_file", "main.py")
         code = files.get(current, "")
         if not code.strip():
-            send_message(chat_id, f"📭 Нет кода в файле `{current}` для запуска", parse_mode="Markdown")
+            send_message(chat_id, "Нет кода")
             return
-        send_message(chat_id, "🏃 Запускаю код...")
         result = run_code_safe(code)
         if result["success"]:
-            output = result["output"][:3000] if result["output"] else "(нет вывода)"
-            send_message(chat_id, f"✅ *Выполнение успешно!*\n```\n{output}\n```", parse_mode="Markdown")
+            send_message(chat_id, f"✅ Выполнено!\n```\n{result['output'][:1000]}\n```", parse_mode="Markdown")
         else:
-            error = result["error"][:2000] if result["error"] else "Неизвестная ошибка"
-            send_message(chat_id, f"❌ *Ошибка выполнения:*\n```\n{error}\n```", parse_mode="Markdown")
+            send_message(chat_id, f"❌ Ошибка:\n```\n{result['error'][:1000]}\n```", parse_mode="Markdown")
+    
+    elif text == "📁 Файлы" or text == "/files":
+        files = user_sessions[uid].get("files", {})
+        if not files:
+            send_message(chat_id, "Нет файлов")
+        else:
+            file_list = "\n".join([f"• `{name}`" for name in files.keys()])
+            send_message(chat_id, f"📁 *Файлы:*\n{file_list}\n\n🌍 /publish - опубликовать текущий файл", parse_mode="Markdown")
+    
+    elif text == "➕ Добавить файл":
+        send_message(chat_id, "Введите имя файла (например: app.py, index.html):")
+    
+    elif text.startswith("➕ ") and len(text) > 2:
+        filename = text[2:]
+        user_sessions[uid]["files"][filename] = f"# Файл {filename}\n"
+        send_message(chat_id, f"✅ Файл `{filename}` создан!", parse_mode="Markdown")
     
     elif text == "🗑 Очистить всё" or text == "/reset":
-        user_sessions[uid]["files"] = {"main.py": '# Код пуст\nprint("Hello, World!")'}
-        user_sessions[uid]["current_file"] = "main.py"
-        send_message(chat_id, "🧹 Все файлы очищены!", reply_markup=json.dumps(get_main_keyboard()))
+        user_sessions[uid]["files"] = {"main.py": '# Ваш код\nprint("Hello, World!")'}
+        send_message(chat_id, "Очищено!")
     
     elif text == "❓ Помощь" or text == "/help":
         send_message(chat_id,
-            "📚 *Команды бота:*\n\n"
-            "📝 /show — показать текущий файл\n"
-            "💾 /done — скачать текущий файл\n"
-            "🔧 /fix — исправить ошибки\n"
-            "🐛 /bugs — найти ошибки\n"
-            "🏃 /run — выполнить код\n"
-            "📊 /complexity — анализ сложности\n"
-            "📁 /files — список файлов\n"
-            "➕ /add_file — добавить файл\n"
-            "🗑 /delete_file — удалить файл\n"
-            "🌐 /web — веб-редактор\n"
-            "🌍 /view — просмотр кода в браузере\n"
-            "🗑 /reset — очистить всё\n"
-            "❓ /help — эта справка\n\n"
-            "💡 *Отправьте несколько файлов сразу:*\n"
-            "```\n### Файл: app.py\n```python\nprint('Hello')\n```\n### Файл: requirements.txt\n```\nflask\n```\n```",
-            parse_mode="Markdown",
-            reply_markup=json.dumps(get_main_keyboard()))
+            "📚 *Команды:*\n\n"
+            "🌍 /publish — ОПУБЛИКОВАТЬ КАК САЙТ\n"
+            "📝 /show — показать код\n"
+            "💾 /done — скачать\n"
+            "🔧 /fix — исправить\n"
+            "🐛 /bugs — ошибки\n"
+            "🏃 /run — выполнить\n"
+            "📊 /complexity — анализ\n"
+            "🌐 /web — редактор\n"
+            "📁 /files — файлы\n"
+            "➕ Добавить файл — создать файл\n"
+            "🗑 /reset — очистить",
+            parse_mode="Markdown")
     
-    elif text and not text.startswith("/") and not any(text.startswith(x) for x in ["📝", "💾", "🔧", "🐛", "📊", "🏃", "📁", "➕", "🗑", "🌐", "❓", "🔙", "📄", "🌍"]):
+    elif text and not text.startswith("/") and not any(text.startswith(x) for x in ["📝", "💾", "🔧", "🐛", "📊", "🏃", "📁", "➕", "🗑", "🌐", "❓", "🌍"]):
         files = user_sessions[uid].get("files", {})
         current = user_sessions[uid].get("current_file", "main.py")
-        old_code = files.get(current, "")
-        new_code = old_code + "\n\n" + text if old_code else text
+        old = files.get(current, "")
+        new_code = old + "\n\n" + text if old else text
         user_sessions[uid]["files"][current] = new_code
-        send_message(chat_id, f"✅ *Код добавлен в файл `{current}`!*\n📊 Размер: {len(new_code)} символов", parse_mode="Markdown")
+        send_message(chat_id, f"✅ Код добавлен в `{current}`! {len(new_code)} символов", parse_mode="Markdown")
 
 # ==================== ЗАПУСК ====================
 def run_bot():
     global last_update_id
-    logger.info("🤖 Telegram бот запущен!")
+    logger.info("🤖 Бот запущен!")
     while True:
         try:
             updates = get_updates()
@@ -861,7 +863,7 @@ def run_bot():
                 last_update_id = upd["update_id"]
             time.sleep(1)
         except Exception as e:
-            logger.error(f"Ошибка бота: {e}")
+            logger.error(f"Ошибка: {e}")
             time.sleep(5)
 
 def run_web():
