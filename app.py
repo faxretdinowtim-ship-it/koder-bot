@@ -32,15 +32,18 @@ def send_message(chat_id, text, parse_mode=None, reply_markup=None):
         if reply_markup:
             data["reply_markup"] = reply_markup
         requests.post(f"{API_URL}/sendMessage", json=data, timeout=10)
+        return True
     except Exception as e:
         logger.error(f"Ошибка: {e}")
+        return False
 
 def send_document(chat_id, filename, caption=""):
     try:
         with open(filename, "rb") as f:
             requests.post(f"{API_URL}/sendDocument", data={"chat_id": chat_id, "caption": caption}, files={"document": f}, timeout=30)
+        return True
     except:
-        pass
+        return False
 
 def get_updates():
     global last_update_id
@@ -55,28 +58,23 @@ def get_updates():
 
 # ==================== ФУНКЦИИ ДЛЯ РАБОТЫ С КОДОМ ====================
 def auto_fix_code(code):
-    """Автоматическое исправление ошибок в коде"""
     if not code.strip():
         return code, "Нет кода"
     fixed = code
     fixes = []
     
-    # Исправляем отсутствие двоеточия у функций
     if re.search(r'^def\s+\w+\([^)]*\)\s*$', fixed, re.MULTILINE):
         fixed = re.sub(r'^(def\s+\w+\([^)]*\))\s*$', r'\1:', fixed, flags=re.MULTILINE)
         fixes.append("добавлены двоеточия")
     
-    # Исправляем деление на ноль
     if '/ 0' in fixed or '/0' in fixed:
         fixed = fixed.replace('/ 0', '/ 1').replace('/0', '/1')
         fixes.append("исправлено деление на ноль")
     
-    # Исправляем незакрытые скобки в print
     if re.search(r'print\(["\'][^"\']*["\']$', fixed, re.MULTILINE):
         fixed = re.sub(r'(print\(["\'][^"\']*["\'])$', r'\1)', fixed, flags=re.MULTILINE)
         fixes.append("исправлены скобки в print()")
     
-    # Удаляем дубликаты импортов
     lines = fixed.split('\n')
     seen = set()
     new_lines = []
@@ -94,7 +92,6 @@ def auto_fix_code(code):
     return (fixed, f"✅ Исправлено: {', '.join(fixes)}") if fixes else (fixed, "✅ Код уже в хорошем состоянии")
 
 def find_bugs(code):
-    """Поиск ошибок в коде"""
     code = code.replace('—', '-').replace('–', '-')
     bugs = []
     
@@ -119,7 +116,6 @@ def find_bugs(code):
     return bugs if bugs else ["✅ Ошибок не найдено!"]
 
 def analyze_complexity(code):
-    """Анализ сложности кода"""
     lines = code.split('\n')
     code_lines = len([l for l in lines if l.strip() and not l.strip().startswith('#')])
     functions = code.count('def ')
@@ -137,7 +133,6 @@ def analyze_complexity(code):
     return f"📊 *Анализ сложности кода*\n\n• Строк кода: {code_lines}\n• Функций: {functions}\n• Классов: {classes}\n• Цикломатическая сложность: {complexity:.1f}\n• Оценка: {rating}"
 
 def run_code_safe(code):
-    """Безопасный запуск кода в песочнице"""
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
         f.write(code)
         temp_file = f.name
@@ -152,7 +147,6 @@ def run_code_safe(code):
         os.unlink(temp_file)
 
 def save_code_file(user_id, content):
-    """Сохраняет код в файл с подписью _bot"""
     filename = f"code_{user_id}_bot.py"
     header = f"# 🤖 Создано AI Code Bot\n# Дата: {datetime.now()}\n\n"
     with open(filename, "w", encoding="utf-8") as f:
@@ -198,6 +192,7 @@ def process_message(msg):
             "🗑 /reset — очистить всё\n\n"
             "💡 *Как использовать:* просто отправляй код частями!",
             parse_mode="Markdown", reply_markup=json.dumps(get_keyboard()))
+        return
     
     elif text == "/help" or text == "❓ Помощь":
         send_message(chat_id, 
@@ -213,6 +208,7 @@ def process_message(msg):
             "🗑 /reset — очистить весь код\n\n"
             "💡 *Совет:* Отправляй код частями — я склею их в один файл!",
             parse_mode="Markdown")
+        return
     
     elif text == "/show" or text == "📝 Показать код":
         code = user_sessions[uid]["code"]
@@ -224,6 +220,7 @@ def process_message(msg):
                     send_message(chat_id, f"```python\n{code[i:i+4000]}\n```", parse_mode="Markdown")
             else:
                 send_message(chat_id, f"```python\n{code}\n```", parse_mode="Markdown")
+        return
     
     elif text == "/done" or text == "💾 Скачать код":
         code = user_sessions[uid]["code"]
@@ -233,6 +230,7 @@ def process_message(msg):
         filename = save_code_file(uid, code)
         send_document(chat_id, filename, "✅ Готовый код (с подписью _bot)")
         os.remove(filename)
+        return
     
     elif text == "/fix" or text == "🔧 ИСПРАВИТЬ":
         code = user_sessions[uid]["code"]
@@ -246,15 +244,16 @@ def process_message(msg):
             send_message(chat_id, report)
         else:
             send_message(chat_id, "✅ Код уже в хорошем состоянии!")
+        return
     
     elif text == "/bugs" or text == "🐛 Ошибки":
         code = user_sessions[uid]["code"]
         if not code.strip():
             send_message(chat_id, "📭 Нет кода для проверки")
             return
-        send_message(chat_id, "🔍 Ищу ошибки...")
         bugs = find_bugs(code)
         send_message(chat_id, "\n".join(bugs), parse_mode="Markdown")
+        return
     
     elif text == "/complexity" or text == "📊 Анализ":
         code = user_sessions[uid]["code"]
@@ -263,6 +262,7 @@ def process_message(msg):
             return
         analysis = analyze_complexity(code)
         send_message(chat_id, analysis, parse_mode="Markdown")
+        return
     
     elif text == "/run" or text == "🏃 Запустить":
         code = user_sessions[uid]["code"]
@@ -277,6 +277,7 @@ def process_message(msg):
         else:
             error = result["error"][:2000] if result["error"] else "Неизвестная ошибка"
             send_message(chat_id, f"❌ *Ошибка выполнения:*\n```\n{error}\n```", parse_mode="Markdown")
+        return
     
     elif text == "/undo" or text == "🗑 Удалить последний":
         history = user_sessions[uid].get("history", [])
@@ -286,7 +287,6 @@ def process_message(msg):
             last = history.pop()
             user_sessions[uid]["history"] = history
             
-            # Восстанавливаем код из оставшихся частей
             if history:
                 full_code = "\n\n".join([h["part"] for h in history])
                 user_sessions[uid]["code"] = full_code
@@ -294,6 +294,7 @@ def process_message(msg):
             else:
                 user_sessions[uid]["code"] = ""
                 send_message(chat_id, "🗑 Удалена последняя часть. Код полностью очищен.")
+        return
     
     elif text == "/history" or text == "📜 История":
         history = user_sessions[uid].get("history", [])
@@ -307,12 +308,14 @@ def process_message(msg):
                 msg += f"{i}. [{time_str}] `{preview}...`\n"
             msg += f"\n📊 Всего сохранено: {len(history)} частей"
             send_message(chat_id, msg, parse_mode="Markdown")
+        return
     
     elif text == "/reset" or text == "🗑 Очистить всё":
         user_sessions[uid] = {"code": "", "history": []}
         send_message(chat_id, "🧹 Код полностью очищен!", reply_markup=json.dumps(get_keyboard()))
+        return
     
-    # Обработка обычного кода (склеивание частей)
+    # Обработка обычного кода (склеивание частей) - без дублирования
     elif not text.startswith("/") and not any(text.startswith(x) for x in ["📝", "💾", "🔧", "🐛", "📊", "🏃", "🗑", "📜", "❓"]):
         history = user_sessions[uid].get("history", [])
         history.append({"time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "part": text})
@@ -330,8 +333,9 @@ def process_message(msg):
             f"🔧 /fix — исправить ошибки\n"
             f"🏃 /run — выполнить код",
             parse_mode="Markdown")
+        return
 
-# ==================== HTTP СЕРВЕР (ТОЛЬКО ДЛЯ RENDER) ====================
+# ==================== HTTP СЕРВЕР ====================
 class WebHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/' or self.path == '/health':
