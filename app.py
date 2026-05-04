@@ -5,86 +5,59 @@ import time
 from threading import Thread
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template_string
-
-# Простая реализация Telegram API без библиотек
 import requests
 
-# ==================== КОНФИГУРАЦИЯ ====================
+# ==================== КОНФИГУРАЦИЯ (твои данные) ====================
 TELEGRAM_TOKEN = "8663335250:AAG022Ubd_a00DTNk-JTx1bo4rhzHgw3myM"
 DEEPSEEK_API_KEY = "sk-46f721604f7c475a924c946e31858fb3"
 PORT = int(os.environ.get("PORT", 5000))
 
 app = Flask(__name__)
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# AI клиент (через requests)
-def call_deepseek(prompt: str) -> str:
-    """Вызов DeepSeek API"""
-    url = "https://api.deepseek.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "deepseek-coder",
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.1,
-        "max_tokens": 2000
-    }
-    try:
-        response = requests.post(url, headers=headers, json=data, timeout=30)
-        result = response.json()
-        return result["choices"][0]["message"]["content"]
-    except Exception as e:
-        logger.error(f"AI ошибка: {e}")
-        return ""
-
 # Хранилище пользователей
 user_sessions = {}
-
-# Базовый URL для API
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 # ==================== ФУНКЦИИ TELEGRAM ====================
 def send_message(chat_id, text, parse_mode="Markdown"):
-    """Отправка сообщения в Telegram"""
-    url = f"{API_URL}/sendMessage"
-    data = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": parse_mode
-    }
     try:
-        requests.post(url, json=data, timeout=10)
+        requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": parse_mode}, timeout=10)
     except Exception as e:
-        logger.error(f"Ошибка отправки: {e}")
+        logger.error(f"Ошибка: {e}")
 
 def send_file(chat_id, filename, caption=""):
-    """Отправка файла в Telegram"""
-    url = f"{API_URL}/sendDocument"
-    with open(filename, "rb") as f:
-        files = {"document": f}
-        data = {"chat_id": chat_id, "caption": caption}
-        requests.post(url, data=data, files=files, timeout=30)
+    try:
+        with open(filename, "rb") as f:
+            requests.post(f"{API_URL}/sendDocument", data={"chat_id": chat_id, "caption": caption}, files={"document": f}, timeout=30)
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
 
 def get_updates(offset=None):
-    """Получение обновлений от Telegram"""
-    url = f"{API_URL}/getUpdates"
-    params = {"timeout": 30, "allowed_updates": ["message"]}
+    params = {"timeout": 30}
     if offset:
         params["offset"] = offset
     try:
-        response = requests.get(url, params=params, timeout=35)
-        return response.json().get("result", [])
-    except Exception as e:
-        logger.error(f"Ошибка получения обновлений: {e}")
+        return requests.get(f"{API_URL}/getUpdates", params=params, timeout=35).json().get("result", [])
+    except:
         return []
+
+# ==================== AI ====================
+def call_deepseek(prompt):
+    try:
+        response = requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
+            json={"model": "deepseek-coder", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 2000},
+            timeout=30
+        )
+        return response.json()["choices"][0]["message"]["content"]
+    except:
+        return ""
 
 # ==================== ОБРАБОТКА СООБЩЕНИЙ ====================
 def process_message(message):
-    """Обработка входящего сообщения"""
     chat_id = message["chat"]["id"]
     user_id = message["from"]["id"]
     text = message.get("text", "")
@@ -92,109 +65,90 @@ def process_message(message):
     if user_id not in user_sessions:
         user_sessions[user_id] = {"code": "", "history": []}
     
-    # Обработка команд
-    if text.startswith("/"):
-        if text == "/start":
-            send_message(chat_id, 
-                f"🤖 *AI Code Assembler Bot*\n\n"
-                f"Привет! Я собираю код из частей.\n\n"
-                f"*Команды:*\n"
-                f"/show — показать код\n"
-                f"/done — скачать файл\n"
-                f"/reset — очистить\n"
-                f"/web — веб-редактор\n\n"
-                f"📝 Просто отправь мне часть кода!",
-                parse_mode="Markdown")
-        
-        elif text == "/show":
-            code = user_sessions[user_id]["code"]
-            if not code.strip():
-                send_message(chat_id, "📭 Код пуст. Отправь мне часть кода!")
-            else:
-                send_message(chat_id, f"```python\n{code}\n```", parse_mode="Markdown")
-        
-        elif text == "/done":
-            code = user_sessions[user_id]["code"]
-            if not code.strip():
-                send_message(chat_id, "❌ Нет кода для сохранения!")
-                return
-            
-            filename = f"code_{user_id}.py"
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(code)
-            send_file(chat_id, filename, "✅ Готовый код!")
-            os.remove(filename)
-        
-        elif text == "/reset":
-            user_sessions[user_id]["code"] = ""
-            send_message(chat_id, "🧹 Код очищен!")
-        
-        elif text == "/web":
-            bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
-            send_message(chat_id, f"🎨 *Веб-редактор*\n\n🔗 {bot_url}/web_editor/{user_id}", parse_mode="Markdown")
-        
+    if text == "/start":
+        send_message(chat_id, "🤖 *AI Code Assembler Bot*\n\nПривет! Я собираю код из частей.\n\n*Команды:*\n/show — показать код\n/done — скачать файл\n/reset — очистить\n/web — веб-редактор\n\n📝 Просто отправь мне часть кода!", parse_mode="Markdown")
+    
+    elif text == "/show":
+        code = user_sessions[user_id]["code"]
+        if not code.strip():
+            send_message(chat_id, "📭 Код пуст")
         else:
-            send_message(chat_id, "Неизвестная команда. Используй /start")
-        return
+            send_message(chat_id, f"```python\n{code}\n```", parse_mode="Markdown")
     
-    # Обработка кода (не команда)
-    current = user_sessions[user_id]["code"]
+    elif text == "/done":
+        code = user_sessions[user_id]["code"]
+        if not code.strip():
+            send_message(chat_id, "❌ Нет кода")
+            return
+        filename = f"code_{user_id}.py"
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(code)
+        send_file(chat_id, filename, "✅ Готовый код!")
+        os.remove(filename)
     
-    send_message(chat_id, f"🧠 Анализирую и объединяю код...")
+    elif text == "/reset":
+        user_sessions[user_id]["code"] = ""
+        send_message(chat_id, "🧹 Код очищен!")
     
-    # AI склейка
-    prompt = f"""Ты эксперт по сборке кода. Объедини текущий код с новой частью.
-    Верни ТОЛЬКО итоговый код, без объяснений.
+    elif text == "/web":
+        bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
+        send_message(chat_id, f"🎨 *Веб-редактор*\n\n🔗 {bot_url}/web_editor/{user_id}", parse_mode="Markdown")
     
-    Текущий код:
-    {current if current else "(пусто)"}
+    elif text.startswith("/"):
+        send_message(chat_id, "Неизвестная команда. Используй /start")
     
-    Новая часть:
-    {text}
-    
-    Итоговый код:"""
-    
-    ai_response = call_deepseek(prompt)
-    
-    if ai_response:
-        # Очистка ответа от маркеров
-        ai_response = ai_response.strip()
-        if ai_response.startswith("```"):
-            ai_response = ai_response.split("```")[1]
-            if ai_response.startswith("python"):
-                ai_response = ai_response[6:]
-        user_sessions[user_id]["code"] = ai_response
     else:
-        # Fallback: простое склеивание
-        new_code = current + "\n\n" + text if current else text
-        user_sessions[user_id]["code"] = new_code
-    
-    user_sessions[user_id]["history"].append({
-        "time": str(datetime.now()),
-        "part": text[:100]
-    })
-    
-    code_len = len(user_sessions[user_id]["code"])
-    send_message(chat_id, f"✅ *Код обновлён!*\n📊 Размер: {code_len} символов\n\n/show — посмотреть\n/done — скачать", parse_mode="Markdown")
+        current = user_sessions[user_id]["code"]
+        send_message(chat_id, "🧠 AI анализирует...")
+        
+        # Формируем промпт
+        if current:
+            prompt = f"""Объедини код. Верни ТОЛЬКО итоговый код.
 
-# ==================== ПОЛЛИНГ БОТА ====================
+Текущий код:
+{current}
+
+Новая часть:
+{text}
+
+Итоговый код:"""
+        else:
+            prompt = f"""Верни ТОЛЬКО этот код, без комментариев:
+{text}"""
+        
+        ai_response = call_deepseek(prompt)
+        
+        if ai_response:
+            # Очистка от маркеров
+            ai_response = ai_response.strip()
+            if ai_response.startswith("```"):
+                lines = ai_response.split('\n')
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                ai_response = '\n'.join(lines)
+            user_sessions[user_id]["code"] = ai_response
+        else:
+            new_code = current + "\n\n" + text if current else text
+            user_sessions[user_id]["code"] = new_code
+        
+        user_sessions[user_id]["history"].append({"time": str(datetime.now()), "part": text[:100]})
+        send_message(chat_id, f"✅ *Код обновлён!*\n📊 Размер: {len(user_sessions[user_id]['code'])} символов\n\n/show — посмотреть\n/done — скачать", parse_mode="Markdown")
+
 def run_bot():
-    """Запуск polling бота"""
-    logger.info("🚀 Бот запущен и слушает сообщения...")
+    logger.info("🚀 Бот запущен!")
     last_update_id = 0
-    
     while True:
         try:
             updates = get_updates(offset=last_update_id + 1 if last_update_id else None)
-            
             for update in updates:
                 last_update_id = update["update_id"]
                 if "message" in update:
                     process_message(update["message"])
-            
             time.sleep(1)
         except Exception as e:
-            logger.error(f"Ошибка в цикле бота: {e}")
+            logger.error(f"Ошибка: {e}")
             time.sleep(5)
 
 # ==================== ВЕБ-РЕДАКТОР ====================
@@ -268,17 +222,15 @@ def api_save_code():
     code = data.get('code', '')
     if user_id in user_sessions:
         user_sessions[user_id]["code"] = code
-    return jsonify({"success": True})
+        return jsonify({"success": True})
+    return jsonify({"success": False})
 
 @app.route('/')
 def health():
-    return "🤖 Bot is running!", 200
+    return "🤖 AI Code Assembler Bot is running!", 200
 
 # ==================== ЗАПУСК ====================
 if __name__ == "__main__":
-    # Запускаем бота в отдельном потоке
     bot_thread = Thread(target=run_bot, daemon=True)
     bot_thread.start()
-    
-    # Запускаем Flask сервер
     app.run(host='0.0.0.0', port=PORT)
