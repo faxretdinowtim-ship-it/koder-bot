@@ -85,34 +85,35 @@ def analyze_complexity(code):
     branches = code.count('if ') + code.count('for ') + code.count('while ')
     complexity = 1 + branches * 0.5
     if complexity < 10:
-        rating = "[GREEN] Low"
+        rating = "Низкая"
     elif complexity < 20:
-        rating = "[YELLOW] Medium"
+        rating = "Средняя"
     else:
-        rating = "[RED] High"
-    return f"**Analysis:**\n\nCode lines: {code_lines}\nFunctions: {functions}\nComplexity: {complexity:.1f}\nRating: {rating}"
+        rating = "Высокая"
+    return f"**Анализ сложности:**\n\nСтрок кода: {code_lines}\nФункций: {functions}\nСложность: {complexity:.1f}\nОценка: {rating}"
 
 def find_bugs(code):
     bugs = []
     patterns = [
-        (r'/\s*0\b', 'Division by zero', 'CRITICAL'),
-        (r'eval\s*\(', 'Using eval()', 'HIGH'),
-        (r'except\s*:', 'Bare except', 'MEDIUM'),
-        (r'password\s*=\s*[\'"]', 'Hardcoded password', 'CRITICAL'),
+        (r'/\s*0\b', 'Деление на ноль', 'КРИТИЧЕСКАЯ'),
+        (r'eval\s*\(', 'Использование eval()', 'ВЫСОКАЯ'),
+        (r'except\s*:', 'Голый except', 'СРЕДНЯЯ'),
+        (r'password\s*=\s*[\'"]', 'Хардкод пароля', 'КРИТИЧЕСКАЯ'),
+        (r'print\(', 'Отладочный print()', 'НИЗКАЯ'),
     ]
     for pattern, msg, severity in patterns:
         if re.search(pattern, code):
             bugs.append(f"- {msg} [{severity}]")
     if not bugs:
-        return "No bugs found!"
-    return "**Found bugs:**\n" + "\n".join(bugs)
+        return "Ошибок не найдено!"
+    return "**Найденные ошибки:**\n" + "\n".join(bugs)
 
 def validate_code(code):
     try:
         compile(code, '<string>', 'exec')
-        return "Code is valid!"
+        return "Код синтаксически верен!"
     except SyntaxError as e:
-        return f"Syntax error: {e.msg}\nLine: {e.lineno}"
+        return f"Синтаксическая ошибка: {e.msg}\nСтрока: {e.lineno}"
 
 def reorder_code(code):
     lines = code.split('\n')
@@ -144,11 +145,46 @@ def run_code_safe(code: str) -> dict:
         process = subprocess.run(["python3", temp_file], capture_output=True, text=True, timeout=5)
         return {"success": process.returncode == 0, "output": process.stdout, "error": process.stderr}
     except subprocess.TimeoutExpired:
-        return {"success": False, "output": "", "error": "Timeout (5 sec)"}
+        return {"success": False, "output": "", "error": "Превышено время выполнения (5 сек)"}
     except Exception as e:
         return {"success": False, "output": "", "error": str(e)}
     finally:
         os.unlink(temp_file)
+
+# ==================== АВТОИСПРАВЛЕНИЕ ====================
+def auto_fix_code(code: str) -> str:
+    if not code.strip():
+        return code
+    
+    bug_descriptions = []
+    patterns = [
+        (r'/\s*0\b', 'деление на ноль', 'добавьте проверку "if divisor != 0"'),
+        (r'eval\s*\(', 'использование eval()', 'замените на ast.literal_eval()'),
+        (r'except\s*:', 'голый except', 'используйте "except Exception as e:"'),
+        (r'password\s*=\s*[\'"]', 'хардкод пароля', 'используйте os.getenv("PASSWORD")'),
+    ]
+    
+    for pattern, msg, fix in patterns:
+        if re.search(pattern, code):
+            bug_descriptions.append(f"- {msg} (исправление: {fix})")
+    
+    if not bug_descriptions:
+        return code
+    
+    prompt = f"""Исправь следующие ошибки в коде. Верни ТОЛЬКО исправленный код, без объяснений.
+
+Найденные ошибки:
+{chr(10).join(bug_descriptions)}
+
+Исходный код:
+{code}
+
+Исправленный код:"""
+    
+    ai_response = call_deepseek(prompt)
+    if ai_response:
+        return ai_response
+    return code
 
 # ==================== ОБРАБОТКА TELEGRAM ====================
 def process_message(message):
@@ -162,86 +198,149 @@ def process_message(message):
     if text == "/start":
         bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
         send_message(chat_id, 
-            "AI Code Assembler Bot\n\n"
-            "Hello! I assemble code from parts using DeepSeek AI.\n\n"
-            f"Web editor: {bot_url}/web/{user_id}\n\n"
-            "Commands:\n"
-            "/show - show code\n/done - download file\n/reset - clear\n"
-            "/order - reorder functions\n/complexity - analyze complexity\n/bugs - find bugs\n"
-            "/validate - validate code\n/run - run code\n/web - web editor\n/help - help", parse_mode="Markdown")
+            "🤖 *AI Code Assembler Bot*\n\n"
+            "Привет! Я собираю код из частей с помощью DeepSeek AI.\n\n"
+            f"🌐 *Веб-редактор:* {bot_url}/web/{user_id}\n\n"
+            "*Команды:*\n"
+            "/show — показать код\n"
+            "/done — скачать файл\n"
+            "/reset — очистить\n"
+            "/order — переставить функции\n"
+            "/complexity — анализ сложности\n"
+            "/bugs — поиск ошибок\n"
+            "/validate — проверка синтаксиса\n"
+            "/run — запустить код\n"
+            "/auto_fix — автоисправление ошибок\n"
+            "/web — веб-редактор\n"
+            "/help — помощь", parse_mode="Markdown")
     
     elif text == "/help":
-        send_message(chat_id, "Commands: /start, /show, /done, /reset, /order, /complexity, /bugs, /validate, /run, /web", parse_mode="Markdown")
+        send_message(chat_id, 
+            "📚 *Команды бота:*\n\n"
+            "/start — запустить бота\n"
+            "/show — показать текущий код\n"
+            "/done — скачать код файлом\n"
+            "/reset — очистить весь код\n"
+            "/order — переставить функции в правильном порядке\n"
+            "/complexity — анализ сложности кода\n"
+            "/bugs — поиск ошибок и уязвимостей\n"
+            "/validate — проверка синтаксиса\n"
+            "/run — выполнить код в песочнице\n"
+            "/auto_fix — автоматически исправить ошибки\n"
+            "/web — открыть веб-редактор\n"
+            "/help — показать эту справку", parse_mode="Markdown")
     
     elif text == "/show":
         code = user_sessions[user_id]["code"]
-        send_message(chat_id, f"```python\n{code if code else '# Code is empty'}\n```", parse_mode="Markdown")
+        if not code.strip():
+            send_message(chat_id, "📭 Код пуст. Отправь мне часть кода!")
+        else:
+            send_message(chat_id, f"```python\n{code}\n```", parse_mode="Markdown")
     
     elif text == "/done":
         code = user_sessions[user_id]["code"]
         if not code.strip():
-            send_message(chat_id, "No code to save")
+            send_message(chat_id, "❌ Нет кода для сохранения")
             return
         filename = f"code_{user_id}.py"
-        with open(filename, "w") as f:
+        with open(filename, "w", encoding="utf-8") as f:
             f.write(code)
-        send_file(chat_id, filename, f"Code ready! {len(code)} chars")
+        send_file(chat_id, filename, f"✅ Готовый код! {len(code)} символов")
         os.remove(filename)
     
     elif text == "/reset":
         user_sessions[user_id]["code"] = ""
-        send_message(chat_id, "Code cleared!")
+        user_sessions[user_id]["history"] = []
+        send_message(chat_id, "🧹 Код очищен!")
     
     elif text == "/order":
-        user_sessions[user_id]["code"] = reorder_code(user_sessions[user_id]["code"])
-        send_message(chat_id, "Code reordered!")
+        code = user_sessions[user_id]["code"]
+        if not code:
+            send_message(chat_id, "📭 Нет кода")
+        else:
+            user_sessions[user_id]["code"] = reorder_code(code)
+            send_message(chat_id, "🔄 Код переставлен! Импорты и функции в правильном порядке.")
     
     elif text == "/complexity":
-        send_message(chat_id, analyze_complexity(user_sessions[user_id]["code"]), parse_mode="Markdown")
+        code = user_sessions[user_id]["code"]
+        if not code:
+            send_message(chat_id, "📭 Нет кода для анализа")
+        else:
+            send_message(chat_id, analyze_complexity(code), parse_mode="Markdown")
     
     elif text == "/bugs":
-        send_message(chat_id, find_bugs(user_sessions[user_id]["code"]), parse_mode="Markdown")
+        code = user_sessions[user_id]["code"]
+        if not code:
+            send_message(chat_id, "📭 Нет кода для проверки")
+        else:
+            send_message(chat_id, find_bugs(code), parse_mode="Markdown")
     
     elif text == "/validate":
-        send_message(chat_id, validate_code(user_sessions[user_id]["code"]), parse_mode="Markdown")
+        code = user_sessions[user_id]["code"]
+        if not code:
+            send_message(chat_id, "📭 Нет кода для проверки")
+        else:
+            send_message(chat_id, validate_code(code), parse_mode="Markdown")
     
     elif text == "/run":
-        result = run_code_safe(user_sessions[user_id]["code"])
+        code = user_sessions[user_id]["code"]
+        if not code.strip():
+            send_message(chat_id, "📭 Нет кода для запуска")
+            return
+        send_message(chat_id, "🏃 Запуск кода в песочнице...")
+        result = run_code_safe(code)
         if result["success"]:
-            send_message(chat_id, f"Success!\n```\n{result['output'][:2000]}\n```", parse_mode="Markdown")
+            output = result["output"][:3000] if result["output"] else "(нет вывода)"
+            send_message(chat_id, f"✅ *Выполнение успешно!*\n\n```\n{output}\n```", parse_mode="Markdown")
         else:
-            send_message(chat_id, f"Error:\n```\n{result['error'][:2000]}\n```", parse_mode="Markdown")
+            error = result["error"][:2000] if result["error"] else "Неизвестная ошибка"
+            send_message(chat_id, f"❌ *Ошибка выполнения:*\n```\n{error}\n```", parse_mode="Markdown")
+    
+    elif text == "/auto_fix":
+        code = user_sessions[user_id]["code"]
+        if not code.strip():
+            send_message(chat_id, "📭 Нет кода для исправления")
+            return
+        
+        send_message(chat_id, "🔧 AI исправляет ошибки...")
+        fixed_code = auto_fix_code(code)
+        
+        if fixed_code != code:
+            user_sessions[user_id]["code"] = fixed_code
+            send_message(chat_id, "✅ *Код автоматически исправлен!*\n/show — посмотреть результат", parse_mode="Markdown")
+        else:
+            send_message(chat_id, "❌ Ошибок не найдено или AI не смог их исправить.\n/bugs — проверить вручную", parse_mode="Markdown")
     
     elif text == "/web":
         bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
-        send_message(chat_id, f"Web editor: {bot_url}/web/{user_id}", parse_mode="Markdown")
+        send_message(chat_id, f"🎨 *Веб-редактор*\n\n🔗 {bot_url}/web/{user_id}", parse_mode="Markdown")
     
     elif not text.startswith("/"):
         current = user_sessions[user_id]["code"]
-        send_message(chat_id, "AI analyzing code...")
+        send_message(chat_id, "🧠 AI анализирует код...")
         
         if current:
-            prompt = f"""Combine the code. Return ONLY the final code, no explanations.
+            prompt = f"""Объедини код. Верни ТОЛЬКО итоговый код, без объяснений.
 
-Current code:
+Текущий код:
 {current}
 
-New part:
+Новая часть:
 {text}
 
-Final code:"""
+Итоговый код:"""
         else:
-            prompt = f"""Return ONLY this code, no comments:
+            prompt = f"""Верни ТОЛЬКО этот код, без комментариев:
 {text}"""
         
         ai_response = call_deepseek(prompt)
         new_code = ai_response if ai_response else (current + "\n\n" + text if current else text)
         user_sessions[user_id]["code"] = new_code
-        send_message(chat_id, f"Code updated! {len(new_code)} chars\n/show to view", parse_mode="Markdown")
+        send_message(chat_id, f"✅ *Код обновлён!*\n📊 Размер: {len(new_code)} символов\n\n/show — посмотреть\n/run — запустить", parse_mode="Markdown")
 
 # ==================== TELEGRAM БОТ ====================
 def run_telegram_bot():
-    logger.info("Telegram bot started!")
+    logger.info("🤖 Telegram бот запущен!")
     last_update_id = 0
     while True:
         try:
@@ -252,22 +351,22 @@ def run_telegram_bot():
                     process_message(update["message"])
             time.sleep(1)
         except Exception as e:
-            logger.error(f"Error: {e}")
+            logger.error(f"Ошибка: {e}")
             time.sleep(5)
 
 # ==================== ВЕБ-СЕРВЕР ====================
 WEB_HTML = '''<!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Code Editor</title>
+    <title>🤖 AI Code Editor</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: #1e1e1e; font-family: monospace; }
         #editor { height: 85vh; }
         .toolbar { background: #2d2d2d; padding: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
-        button { padding: 8px 16px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 4px; }
+        button { padding: 8px 16px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 4px; font-size: 14px; }
         button:hover { background: #1177bb; }
         .status { background: #1e1e1e; color: #888; padding: 5px 10px; font-size: 12px; }
     </style>
@@ -275,13 +374,15 @@ WEB_HTML = '''<!DOCTYPE html>
 </head>
 <body>
 <div class="toolbar">
-    <button onclick="saveCode()">Save</button>
-    <button onclick="runCode()">Run</button>
-    <button onclick="analyzeCode()">Analyze</button>
-    <button onclick="downloadCode()">Download</button>
+    <button onclick="saveCode()">💾 Сохранить</button>
+    <button onclick="runCode()">▶️ Запустить</button>
+    <button onclick="analyzeCode()">📊 Анализ</button>
+    <button onclick="findBugs()">🐛 Ошибки</button>
+    <button onclick="autoFix()">🔧 Исправить</button>
+    <button onclick="downloadCode()">📥 Скачать</button>
 </div>
 <div id="editor"></div>
-<div class="status" id="status">Ready</div>
+<div class="status" id="status">Готов к работе</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.js"></script>
 <script>
@@ -305,7 +406,7 @@ require(['vs/editor/editor.main'], function() {
 async function loadCode() {
     const res = await fetch(`${API_URL}/api/get_code?user_id=${USER_ID}`);
     const data = await res.json();
-    editor.setValue(data.code || '# Code is empty');
+    editor.setValue(data.code || '# Код пуст');
 }
 
 async function saveCode() {
@@ -315,8 +416,8 @@ async function saveCode() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({user_id: USER_ID, code: code})
     });
-    document.getElementById('status').innerText = 'Saved!';
-    setTimeout(() => document.getElementById('status').innerText = 'Ready', 2000);
+    document.getElementById('status').innerText = '✅ Сохранено!';
+    setTimeout(() => document.getElementById('status').innerText = 'Готов к работе', 2000);
 }
 
 async function runCode() {
@@ -327,7 +428,11 @@ async function runCode() {
         body: JSON.stringify({code: code})
     });
     const data = await res.json();
-    alert(data.success ? (data.output || 'Success!') : 'Error: ' + data.error);
+    if (data.success) {
+        alert('✅ Выполнено!\n\n' + (data.output || '(нет вывода)'));
+    } else {
+        alert('❌ Ошибка:\n\n' + data.error);
+    }
 }
 
 async function analyzeCode() {
@@ -338,7 +443,31 @@ async function analyzeCode() {
         body: JSON.stringify({code: code})
     });
     const data = await res.json();
-    alert(data.report);
+    alert('📊 Анализ сложности:\n\n' + data.report);
+}
+
+async function findBugs() {
+    const code = editor.getValue();
+    const res = await fetch(`${API_URL}/api/bugs`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({code: code})
+    });
+    const data = await res.json();
+    alert('🐛 Поиск ошибок:\n\n' + data.report);
+}
+
+async function autoFix() {
+    const code = editor.getValue();
+    const res = await fetch(`${API_URL}/api/auto_fix`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({code: code})
+    });
+    const data = await res.json();
+    editor.setValue(data.code);
+    document.getElementById('status').innerText = '🔧 Код исправлен!';
+    setTimeout(() => document.getElementById('status').innerText = 'Готов к работе', 2000);
 }
 
 function downloadCode() {
@@ -358,24 +487,23 @@ class WebHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path.startswith('/web/'):
-            user_id = parsed.path.split('/')[2]
             self.send_response(200)
-            self.send_header('Content-type', 'text/html')
+            self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
-            self.wfile.write(WEB_HTML.encode())
+            self.wfile.write(WEB_HTML.encode('utf-8'))
         elif parsed.path == '/' or parsed.path == '/health':
             self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
+            self.send_header('Content-type', 'text/plain; charset=utf-8')
             self.end_headers()
-            self.wfile.write(b'Bot is running!')
+            self.wfile.write('Бот работает!'.encode('utf-8'))
         elif parsed.path.startswith('/api/get_code'):
             query = parse_qs(parsed.query)
             user_id = int(query.get('user_id', [0])[0])
             code = user_sessions.get(user_id, {}).get("code", "")
             self.send_response(200)
-            self.send_header('Content-type', 'application/json')
+            self.send_header('Content-type', 'application/json; charset=utf-8')
             self.end_headers()
-            self.wfile.write(json.dumps({"code": code}).encode())
+            self.wfile.write(json.dumps({"code": code}, ensure_ascii=False).encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
@@ -411,6 +539,22 @@ class WebHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"report": result}).encode())
         
+        elif self.path == '/api/bugs':
+            data = json.loads(body)
+            result = find_bugs(data.get('code', ''))
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"report": result}).encode())
+        
+        elif self.path == '/api/auto_fix':
+            data = json.loads(body)
+            result = auto_fix_code(data.get('code', ''))
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"code": result}).encode())
+        
         else:
             self.send_response(404)
             self.end_headers()
@@ -420,7 +564,7 @@ class WebHandler(BaseHTTPRequestHandler):
 
 def run_web_server():
     server = HTTPServer(('0.0.0.0', PORT), WebHandler)
-    logger.info(f"Web server started on port {PORT}")
+    logger.info(f"Веб-сервер запущен на порту {PORT}")
     server.serve_forever()
 
 # ==================== ЗАПУСК ====================
