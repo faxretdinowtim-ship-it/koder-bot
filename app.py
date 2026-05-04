@@ -22,32 +22,37 @@ user_sessions = {}
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 processed_ids = set()
 
-# ==================== HTML СТРАНИЦА ====================
+# ==================== HTML СТРАНИЦА (ВЕБ-РЕДАКТОР) ====================
 WEB_HTML = '''<!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🤖 AI Code Editor</title>
+    <title>🤖 AI Code Editor - Твой код</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: #1e1e1e; font-family: monospace; }
+        .header { background: #2d2d2d; padding: 12px 20px; text-align: center; border-bottom: 1px solid #444; }
+        .logo { font-size: 20px; font-weight: bold; background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         #editor { height: 70vh; }
-        .toolbar { background: #2d2d2d; padding: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
-        button { padding: 8px 16px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 4px; }
+        .toolbar { background: #2d2d2d; padding: 10px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+        button { padding: 8px 16px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 6px; }
         button:hover { background: #1177bb; }
         button.primary { background: linear-gradient(135deg, #667eea, #764ba2); }
-        .output { background: #1e1e1e; color: #d4d4d4; padding: 10px; height: 25vh; overflow: auto; font-family: monospace; white-space: pre-wrap; border-top: 1px solid #333; }
-        .status { background: #1e1e1e; color: #888; padding: 5px 10px; font-size: 12px; display: flex; justify-content: space-between; }
+        .output { background: #1e1e1e; color: #d4d4d4; padding: 15px; height: 20vh; overflow: auto; font-family: monospace; white-space: pre-wrap; border-top: 1px solid #333; }
+        .status { background: #1e1e1e; color: #888; padding: 5px 15px; font-size: 12px; text-align: center; }
         .success { color: #6a9955; }
         .error { color: #f48771; }
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/editor/editor.main.min.css">
 </head>
 <body>
+<div class="header">
+    <div class="logo">🤖 AI Code Editor</div>
+</div>
 <div class="toolbar">
-    <button class="primary" onclick="syncFromBot()">📥 Загрузить из бота</button>
-    <button class="primary" onclick="syncToBot()">💾 Сохранить в бота</button>
+    <button class="primary" onclick="syncFromBot()">📥 Загрузить код из бота</button>
+    <button class="primary" onclick="syncToBot()">💾 Сохранить код в бота</button>
     <button onclick="runCode()">▶️ Запустить</button>
     <button onclick="analyzeCode()">📊 Анализ</button>
     <button onclick="findBugs()">🐛 Ошибки</button>
@@ -55,8 +60,8 @@ WEB_HTML = '''<!DOCTYPE html>
     <button onclick="downloadCode()">📥 Скачать</button>
 </div>
 <div id="editor"></div>
-<div class="output" id="output">⚡ Нажми "Загрузить из бота"</div>
-<div class="status"><span id="status">⚡ Готов</span><span id="stats">📝 0</span></div>
+<div class="output" id="output">⚡ Готов к работе. Нажми "Загрузить код из бота"</div>
+<div class="status" id="status">⚡ Готов</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.js"></script>
 <script>
@@ -64,91 +69,97 @@ let editor;
 const USER_ID = window.location.pathname.split('/')[2];
 const API_URL = window.location.origin;
 
+function setOutput(text, type = 'info') {
+    const out = document.getElementById('output');
+    const cls = type === 'error' ? 'error' : (type === 'success' ? 'success' : 'info');
+    out.innerHTML = `<span class="${cls}">${escapeHtml(text)}</span>`;
+}
+
+function escapeHtml(t) { return t.replace(/[&<>]/g, function(m) { return {'&':'&amp;','<':'&lt;','>':'&gt;'}[m]; }).replace(/\n/g, '<br>'); }
+
 require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
 require(['vs/editor/editor.main'], function() {
     editor = monaco.editor.create(document.getElementById('editor'), {
-        value: '# Нажми "Загрузить из бота"',
+        value: '# Нажми "Загрузить код из бота"',
         language: 'python',
         theme: 'vs-dark',
         fontSize: 14,
         minimap: { enabled: true },
         automaticLayout: true
     });
-    editor.onDidChangeModelContent(() => {
-        document.getElementById('stats').innerHTML = `📝 ${editor.getValue().length}`;
-    });
 });
 
 async function syncFromBot() {
-    const res = await fetch(API_URL + '/api/load?user_id=' + USER_ID);
-    const data = await res.json();
-    if (data.code) {
-        editor.setValue(data.code);
-        document.getElementById('output').innerHTML = '<span class="success">✅ Загружено из бота!</span>';
-    } else {
-        document.getElementById('output').innerHTML = '<span class="error">❌ Нет кода в боте</span>';
-    }
+    setOutput('⏳ Загрузка...');
+    try {
+        const res = await fetch(API_URL + '/api/load?user_id=' + USER_ID);
+        const data = await res.json();
+        if (data.code && data.code !== '# Пусто') {
+            editor.setValue(data.code);
+            setOutput('✅ Код загружен из Telegram бота!', 'success');
+        } else {
+            setOutput('📭 В боте нет кода. Отправь код в Telegram.', 'error');
+        }
+    } catch(e) { setOutput('❌ Ошибка загрузки', 'error'); }
 }
 
 async function syncToBot() {
     const code = editor.getValue();
+    if (!code.trim()) { setOutput('❌ Нет кода', 'error'); return; }
+    setOutput('⏳ Сохранение...');
     await fetch(API_URL + '/api/save', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({user_id: USER_ID, code: code})
     });
-    document.getElementById('output').innerHTML = '<span class="success">✅ Сохранено в бота!</span>';
+    setOutput('✅ Сохранено в бота!', 'success');
 }
 
 async function runCode() {
     const code = editor.getValue();
-    document.getElementById('output').innerHTML = '⏳ Выполнение...';
+    if (!code.trim()) { setOutput('❌ Нет кода', 'error'); return; }
+    setOutput('⏳ Выполнение...');
     const res = await fetch(API_URL + '/api/run', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({code: code})
     });
     const data = await res.json();
     if (data.success) {
-        document.getElementById('output').innerHTML = '<span class="success">✅ Выполнено!</span>\n\n' + (data.output || '(нет вывода)');
+        setOutput(data.output || '✅ Выполнено!', 'success');
     } else {
-        document.getElementById('output').innerHTML = '<span class="error">❌ Ошибка:</span>\n\n' + data.error;
+        setOutput('❌ ' + (data.error || 'Ошибка'), 'error');
     }
 }
 
 async function analyzeCode() {
     const code = editor.getValue();
     const res = await fetch(API_URL + '/api/analyze', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({code: code})
     });
     const data = await res.json();
-    document.getElementById('output').innerHTML = '📊 ' + data.report;
+    setOutput('📊 ' + data.report, 'info');
 }
 
 async function findBugs() {
     const code = editor.getValue();
     const res = await fetch(API_URL + '/api/bugs', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({code: code})
     });
     const data = await res.json();
-    document.getElementById('output').innerHTML = '🐛 ' + data.report;
+    setOutput('🐛 ' + data.report, data.report.includes('✅') ? 'success' : 'error');
 }
 
 async function fixCode() {
     const code = editor.getValue();
-    document.getElementById('output').innerHTML = '🔧 Исправление...';
+    setOutput('🔧 Исправление...');
     const res = await fetch(API_URL + '/api/fix', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({code: code})
     });
     const data = await res.json();
     editor.setValue(data.code);
-    document.getElementById('output').innerHTML = data.report;
+    setOutput(data.report, 'success');
 }
 
 function downloadCode() {
@@ -174,11 +185,6 @@ def send_message(chat_id, text, parse_mode=None, reply_markup=None):
         requests.post(f"{API_URL}/sendMessage", json=data, timeout=10)
     except:
         pass
-
-def send_web_button(chat_id, user_id):
-    bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
-    rm = {"inline_keyboard": [[{"text": "🌐 ОТКРЫТЬ РЕДАКТОР", "web_app": {"url": f"{bot_url}/web/{user_id}"}}]]}
-    send_message(chat_id, "🌐 Нажми на кнопку!", reply_markup=json.dumps(rm))
 
 def get_updates(offset=None):
     params = {"timeout": 30}
@@ -218,7 +224,7 @@ def find_bugs(code):
 def analyze_complexity(code):
     lines = code.split('\n')
     code_lines = len([l for l in lines if l.strip() and not l.strip().startswith('#')])
-    return f"Строк кода: {code_lines}\nФункций: {code.count('def ')}"
+    return f"Строк кода: {code_lines} | Функций: {code.count('def ')}"
 
 def run_code_safe(code):
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
@@ -236,19 +242,16 @@ def run_code_safe(code):
 class WebHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
-        
         if parsed.path.startswith('/web/'):
             self.send_response(200)
             self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
             self.wfile.write(WEB_HTML.encode('utf-8'))
-        
         elif parsed.path == '/' or parsed.path == '/health':
             self.send_response(200)
             self.send_header('Content-type', 'text/plain')
             self.end_headers()
             self.wfile.write(b'Bot is running!')
-        
         elif parsed.path.startswith('/api/load'):
             query = parse_qs(parsed.query)
             user_id = int(query.get('user_id', [0])[0])
@@ -257,7 +260,6 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"code": code}).encode())
-        
         else:
             self.send_response(404)
             self.end_headers()
@@ -277,35 +279,30 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"success": True}).encode())
-        
         elif self.path == '/api/run':
             result = run_code_safe(data.get('code', ''))
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(result).encode())
-        
         elif self.path == '/api/analyze':
             result = analyze_complexity(data.get('code', ''))
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"report": result}).encode())
-        
         elif self.path == '/api/bugs':
             bugs = find_bugs(data.get('code', ''))
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"report": "\n".join(bugs)}).encode())
-        
         elif self.path == '/api/fix':
             fixed, report = auto_fix_code(data.get('code', ''))
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"code": fixed, "report": report}).encode())
-        
         else:
             self.send_response(404)
             self.end_headers()
@@ -317,7 +314,7 @@ class WebHandler(BaseHTTPRequestHandler):
 def get_keyboard():
     return {
         "keyboard": [
-            ["🌐 Веб-редактор", "📝 Показать код"],
+            ["🌐 Открыть сайт", "📝 Показать код"],
             ["🔧 ИСПРАВИТЬ", "🐛 Ошибки"],
             ["🏃 Запустить", "🗑 Очистить всё"]
         ],
@@ -332,11 +329,13 @@ def process_message(msg):
     if uid not in user_sessions:
         user_sessions[uid] = {"code": ""}
     
-    if text == "/start":
-        send_message(chat_id, "🤖 AI Code Bot\n\nПришли код - я исправлю!\n\n🌐 /web - редактор\n🔧 /fix - исправить", reply_markup=json.dumps(get_keyboard()))
+    bot_url = os.environ.get("RENDER_EXTERNAL_URL", "https://telegram-ai-bot-4g1k.onrender.com")
     
-    elif text == "/web" or text == "🌐 Веб-редактор":
-        send_web_button(chat_id, uid)
+    if text == "/start":
+        send_message(chat_id, "🤖 AI Code Bot\n\nПришли код - я сохраню!\n\n🌐 /site - открыть сайт с кодом\n🔧 /fix - исправить", reply_markup=json.dumps(get_keyboard()))
+    
+    elif text == "/site" or text == "🌐 Открыть сайт":
+        send_message(chat_id, f"🌐 *Твой код уже на сайте!*\n\nОткрывай в браузере:\n{bot_url}/web/{uid}\n\n📝 Твой код автоматически подгрузится в редактор.", parse_mode="Markdown")
     
     elif text == "📝 Показать код" or text == "/show":
         code = user_sessions[uid]["code"]
@@ -377,7 +376,7 @@ def process_message(msg):
         current = user_sessions[uid]["code"]
         new_code = current + "\n\n" + text if current else text
         user_sessions[uid]["code"] = new_code
-        send_message(chat_id, f"✅ Сохранено! {len(new_code)} символов")
+        send_message(chat_id, f"✅ Сохранено! {len(new_code)} символов\n\n🌐 /site - открыть сайт с кодом")
 
 # ==================== ЗАПУСК ====================
 def run_bot():
