@@ -81,7 +81,7 @@ def run_code_safe(code):
     finally:
         os.unlink(temp_file)
 
-# ==================== ОСНОВНЫЕ ФУНКЦИИ (СОХРАНЕНЫ) ====================
+# ==================== AI ФУНКЦИИ ДЛЯ КОДА ====================
 def auto_fix_code(code):
     prompt = f"""Исправь все ошибки в этом коде. Верни ТОЛЬКО исправленный код.
 
@@ -110,7 +110,16 @@ def analyze_complexity(code):
     lines = code.split("\n")
     code_lines = len([l for l in lines if l.strip() and not l.strip().startswith("#")])
     functions = code.count("def ")
-    return f"📊 Анализ:\nСтрок кода: {code_lines}\nФункций: {functions}"
+    classes = code.count("class ")
+    branches = code.count("if ") + code.count("for ") + code.count("while ")
+    complexity = 1 + branches * 0.5
+    if complexity < 10:
+        rating = "🟢 Низкая (хорошо)"
+    elif complexity < 20:
+        rating = "🟡 Средняя (нормально)"
+    else:
+        rating = "🔴 Высокая (нужен рефакторинг)"
+    return f"📊 *Анализ сложности кода*\n\n• Строк кода: {code_lines}\n• Функций: {functions}\n• Классов: {classes}\n• Цикломатическая сложность: {complexity:.1f}\n• Оценка: {rating}"
 
 def generate_code(description):
     prompt = f"""Напиши код на Python по описанию. Верни ТОЛЬКО код.
@@ -239,6 +248,57 @@ def refactor_code_ai(code):
 Отрефакторенный код:"""
     return call_deepseek(prompt)
 
+def translate_code(code, target_lang):
+    prompt = f"""Переведи этот код с Python на {target_lang}. Верни ТОЛЬКО код.
+Код:
+{code}
+Код на {target_lang}:"""
+    return call_deepseek(prompt)
+
+def github_push(repo_name, filename, content):
+    if not GITHUB_TOKEN:
+        return "❌ GitHub токен не настроен"
+    try:
+        from github import Github
+        g = Github(GITHUB_TOKEN)
+        user = g.get_user()
+        try:
+            repo = user.get_repo(repo_name)
+        except:
+            repo = user.create_repo(repo_name)
+        try:
+            file = repo.get_contents(filename)
+            repo.update_file(filename, f"Update {filename}", content, file.sha)
+        except:
+            repo.create_file(filename, f"Add {filename}", content)
+        return f"✅ Код загружен в GitHub!\n🔗 https://github.com/{user.login}/{repo_name}/blob/main/{filename}"
+    except Exception as e:
+        return f"❌ Ошибка GitHub: {e}"
+
+def run_tests_with_report(code):
+    tests = generate_tests(code)
+    if not tests:
+        return "❌ Не удалось сгенерировать тесты"
+    full_code = code + "\n\n" + tests
+    result = run_code_safe(full_code)
+    if result["success"]:
+        return "✅ *Все тесты пройдены!*\n\n" + result['output'][:500]
+    else:
+        return "❌ *Тесты не пройдены!*\n\n" + result['error'][:500]
+
+def find_logic_bugs(code):
+    prompt = f"""Найди логические ошибки в этом коде. Верни JSON.
+Код:
+{code}
+JSON с ошибками:"""
+    response = call_deepseek(prompt)
+    if response:
+        try:
+            return json.loads(response)
+        except:
+            return {"bugs": [{"message": response[:500]}]}
+    return {"bugs": []}
+
 def get_stats(user_id):
     data = user_sessions.get(user_id, {})
     code_len = len(data.get("code", ""))
@@ -251,7 +311,7 @@ def get_stats(user_id):
 • Действий в истории: {history_count}
 • Файлов в проекте: {files_count}"""
 
-# ==================== КЛАВИАТУРА (37+ КНОПОК) ====================
+# ==================== КЛАВИАТУРЫ ====================
 def get_main_keyboard():
     return {
         "keyboard": [
@@ -264,23 +324,14 @@ def get_main_keyboard():
             ["📄 ЭКСПОРТ PDF", "🎨 ФОРМАТИРОВАТЬ"],
             ["🔍 ПОИСК", "🔄 ЗАМЕНИТЬ"],
             ["🐞 FIX BUG", "⚡ УЛУЧШИТЬ"],
+            ["📖 ОБЪЯСНИТЬ", "🔧 РЕФАКТОРИНГ"],
+            ["🔄 ПЕРЕВОД", "🏆 ТЕСТЫ С ОТЧЁТОМ"],
+            ["🧠 ЛОГИЧЕСКИЕ БАГИ", "🐙 GITHUB PUSH"],
+            ["📦 ЭКСПОРТ JSON", "📄 ЭКСПОРТ HTML"],
             ["📁 ФАЙЛЫ", "➕ ДОБАВИТЬ ФАЙЛ"],
             ["🗑 Удалить последний", "📜 ИСТОРИЯ"],
+            ["📊 СТАТИСТИКА", "⚙️ НАСТРОЙКИ"],
             ["🗑 ОЧИСТИТЬ ВСЁ", "❓ ПОМОЩЬ"]
-        ],
-        "resize_keyboard": True
-    }
-
-def get_extended_keyboard():
-    return {
-        "keyboard": [
-            ["🌐 ДРУГИЕ ЯЗЫКИ", "🐙 GITHUB PUSH"],
-            ["🎤 ГОЛОСОВОЙ ВВОД", "🧠 ЛОГИЧЕСКИЕ БАГИ"],
-            ["🏆 ТЕСТЫ С ОТЧЁТОМ", "📦 ЭКСПОРТ JSON"],
-            ["📄 ЭКСПОРТ HTML", "🔄 ПЕРЕВОД"],
-            ["🔧 РЕФАКТОРИНГ", "📖 ОБЪЯСНИТЬ"],
-            ["⚙️ НАСТРОЙКИ", "📊 СТАТИСТИКА"],
-            ["🔙 ГЛАВНОЕ МЕНЮ", "🏠 СТАРТ"]
         ],
         "resize_keyboard": True
     }
@@ -294,12 +345,12 @@ def get_full_keyboard():
             ["🧪 ТЕСТЫ", "📋 CODE REVIEW", "📝 КОММЕНТАРИИ"],
             ["📄 ЭКСПОРТ PDF", "🎨 ФОРМАТИРОВАТЬ", "🔍 ПОИСК"],
             ["🔄 ЗАМЕНИТЬ", "🐞 FIX BUG", "⚡ УЛУЧШИТЬ"],
-            ["🌐 ДРУГИЕ ЯЗЫКИ", "🐙 GITHUB PUSH", "🎤 ГОЛОСОВОЙ ВВОД"],
-            ["🧠 ЛОГИЧЕСКИЕ БАГИ", "🏆 ТЕСТЫ С ОТЧЁТОМ", "📦 ЭКСПОРТ JSON"],
-            ["📄 ЭКСПОРТ HTML", "🔄 ПЕРЕВОД", "🔧 РЕФАКТОРИНГ"],
-            ["📖 ОБЪЯСНИТЬ", "⚙️ НАСТРОЙКИ", "📊 СТАТИСТИКА"],
-            ["📁 ФАЙЛЫ", "➕ ДОБАВИТЬ ФАЙЛ", "🗑 Удалить последний"],
-            ["📜 ИСТОРИЯ", "🗑 ОЧИСТИТЬ ВСЁ", "❓ ПОМОЩЬ"]
+            ["📖 ОБЪЯСНИТЬ", "🔧 РЕФАКТОРИНГ", "🔄 ПЕРЕВОД"],
+            ["🏆 ТЕСТЫ С ОТЧЁТОМ", "🧠 ЛОГИЧЕСКИЕ БАГИ", "🐙 GITHUB PUSH"],
+            ["📦 ЭКСПОРТ JSON", "📄 ЭКСПОРТ HTML", "📁 ФАЙЛЫ"],
+            ["➕ ДОБАВИТЬ ФАЙЛ", "🗑 Удалить последний", "📜 ИСТОРИЯ"],
+            ["📊 СТАТИСТИКА", "⚙️ НАСТРОЙКИ", "🗑 ОЧИСТИТЬ ВСЁ"],
+            ["❓ ПОМОЩЬ", "🏠 СТАРТ", "🔙 НАЗАД"]
         ],
         "resize_keyboard": True
     }
@@ -315,22 +366,17 @@ def get_settings_keyboard():
         "resize_keyboard": True
     }
 
-# ==================== СПИСОК ВСЕХ КНОПОК ====================
-BUTTONS = [
-    "📝 Показать код", "💾 Скачать код", "🔧 ИСПРАВИТЬ", "🐛 ОШИБКИ",
-    "📊 АНАЛИЗ", "🏃 ЗАПУСТИТЬ", "✨ ГЕНЕРАЦИЯ", "🧠 УМНАЯ СКЛЕЙКА",
-    "🔄 ПРЕОБРАЗОВАТЬ", "🧪 ТЕСТЫ", "📋 CODE REVIEW", "📝 КОММЕНТАРИИ",
-    "📄 ЭКСПОРТ PDF", "🎨 ФОРМАТИРОВАТЬ", "🔍 ПОИСК", "🔄 ЗАМЕНИТЬ",
-    "🐞 FIX BUG", "⚡ УЛУЧШИТЬ", "🌐 ДРУГИЕ ЯЗЫКИ", "🐙 GITHUB PUSH",
-    "🎤 ГОЛОСОВОЙ ВВОД", "🧠 ЛОГИЧЕСКИЕ БАГИ", "🏆 ТЕСТЫ С ОТЧЁТОМ",
-    "📦 ЭКСПОРТ JSON", "📄 ЭКСПОРТ HTML", "🔄 ПЕРЕВОД", "🔧 РЕФАКТОРИНГ",
-    "📖 ОБЪЯСНИТЬ", "⚙️ НАСТРОЙКИ", "📊 СТАТИСТИКА", "📁 ФАЙЛЫ",
-    "➕ ДОБАВИТЬ ФАЙЛ", "🗑 Удалить последний", "📜 ИСТОРИЯ",
-    "🗑 ОЧИСТИТЬ ВСЁ", "❓ ПОМОЩЬ", "🔙 ГЛАВНОЕ МЕНЮ", "🏠 СТАРТ",
-    "🔊 Уведомления ВКЛ", "🔇 Уведомления ВЫКЛ", "🌙 Тёмная тема",
-    "☀️ Светлая тема", "💾 Автосохранение ВКЛ", "💾 Автосохранение ВЫКЛ",
-    "🔙 НАЗАД", "🏠 ГЛАВНОЕ МЕНЮ"
-]
+def get_languages_keyboard():
+    return {
+        "inline_keyboard": [
+            [{"text": "🐍 Python", "callback_data": "lang_python"}],
+            [{"text": "📜 JavaScript", "callback_data": "lang_javascript"}],
+            [{"text": "☕ Java", "callback_data": "lang_java"}],
+            [{"text": "⚡ C++", "callback_data": "lang_cpp"}],
+            [{"text": "🚀 Go", "callback_data": "lang_go"}],
+            [{"text": "🦀 Rust", "callback_data": "lang_rust"}]
+        ]
+    }
 
 def set_webhook():
     try:
@@ -343,6 +389,25 @@ def set_webhook():
     except Exception as e:
         logger.error(f"Ошибка webhook: {e}")
         return None
+
+# ==================== СПИСОК ВСЕХ КНОПОК ====================
+BUTTONS = {
+    "📝 Показать код": "/show", "💾 Скачать код": "/done", "🔧 ИСПРАВИТЬ": "/fix",
+    "🐛 ОШИБКИ": "/bugs", "📊 АНАЛИЗ": "/complexity", "🏃 ЗАПУСТИТЬ": "/run",
+    "✨ ГЕНЕРАЦИЯ": "/generate", "🧠 УМНАЯ СКЛЕЙКА": "/smart_merge", "🔄 ПРЕОБРАЗОВАТЬ": "/convert",
+    "🧪 ТЕСТЫ": "/tests", "📋 CODE REVIEW": "/review", "📝 КОММЕНТАРИИ": "/comment",
+    "📄 ЭКСПОРТ PDF": "/pdf", "🎨 ФОРМАТИРОВАТЬ": "/format", "🔍 ПОИСК": "/search",
+    "🔄 ЗАМЕНИТЬ": "/replace", "🐞 FIX BUG": "/fixbug", "⚡ УЛУЧШИТЬ": "/improve",
+    "📖 ОБЪЯСНИТЬ": "/explain", "🔧 РЕФАКТОРИНГ": "/refactor", "🔄 ПЕРЕВОД": "/translate",
+    "🏆 ТЕСТЫ С ОТЧЁТОМ": "/test_report", "🧠 ЛОГИЧЕСКИЕ БАГИ": "/logic_bugs", "🐙 GITHUB PUSH": "/github_push",
+    "📦 ЭКСПОРТ JSON": "/export_json", "📄 ЭКСПОРТ HTML": "/export_html", "📁 ФАЙЛЫ": "/files",
+    "➕ ДОБАВИТЬ ФАЙЛ": "/add_file", "🗑 Удалить последний": "/undo", "📜 ИСТОРИЯ": "/history",
+    "📊 СТАТИСТИКА": "/stats", "⚙️ НАСТРОЙКИ": "/settings", "🗑 ОЧИСТИТЬ ВСЁ": "/reset",
+    "❓ ПОМОЩЬ": "/help", "🏠 СТАРТ": "/start", "🔙 НАЗАД": "/start",
+    "🔊 Уведомления ВКЛ": "/notify_on", "🔇 Уведомления ВЫКЛ": "/notify_off",
+    "🌙 Тёмная тема": "/theme_dark", "☀️ Светлая тема": "/theme_light",
+    "💾 Автосохранение ВКЛ": "/autosave_on", "💾 Автосохранение ВЫКЛ": "/autosave_off"
+}
 
 # ==================== ВЕБХУК ====================
 @app.route("/webhook", methods=["POST"])
@@ -364,493 +429,431 @@ def webhook():
                     "settings": {"notifications": True, "theme": "dark", "autosave": True}
                 }
             
-            if text.startswith("/") or text in BUTTONS:
-                
-                # ========== ГЛАВНЫЕ КОМАНДЫ ==========
-                if text in ["/start", "🏠 СТАРТ", "🔙 ГЛАВНОЕ МЕНЮ", "🏠 ГЛАВНОЕ МЕНЮ"]:
-                    send_message(chat_id, "🤖 *AI Code Bot*\n\nВыбери действие:", reply_markup=json.dumps(get_full_keyboard()))
-                
-                elif text in ["/help", "❓ ПОМОЩЬ"]:
-                    help_text = """🤖 *AI Code Bot - ПОЛНАЯ ВЕРСИЯ*
-
-*📝 ОСНОВНЫЕ КОМАНДЫ:*
-/show — показать код
-/done — скачать код
-/fix — ИСПРАВИТЬ ошибки
-/bugs — найти ошибки
-/complexity — анализ сложности
-/run — выполнить код
-
-*🤖 AI ФУНКЦИИ:*
-/generate — создать код по описанию
-/smart_merge — умная склейка
-/convert — преобразовать в другой язык
-/tests — сгенерировать тесты
-/review — Code Review
-/comment — добавить комментарии
-/explain — объяснить код
-/refactor — рефакторинг
-/translate — перевод на другой язык
-
-*🆕 НОВЫЕ ФУНКЦИИ:*
-/format — ФОРМАТИРОВАНИЕ кода
-/search <текст> — ПОИСК в коде
-/replace <старое> <новое> — ЗАМЕНА в коде
-/fixbug <описание> — ИСПРАВЛЕНИЕ бага по описанию
-/improve <описание> — УЛУЧШЕНИЕ кода по описанию
-
-*📁 ФАЙЛЫ:*
-/files — список файлов
-/add_file — добавить файл
-/undo — удалить последнюю часть
-/history — история
-/reset — очистить всё
-/export — экспорт ZIP
-/pdf — экспорт PDF
-
-*🌐 ДРУГОЕ:*
-/languages — другие языки
-/github_push — GitHub интеграция
-/logic_bugs — логические баги
-/test_report — тесты с отчётом
-/export_json — экспорт JSON
-/export_html — экспорт HTML
-/settings — настройки
-/stats — статистика"""
-                    send_message(chat_id, help_text, reply_markup=json.dumps(get_full_keyboard()))
-                
-                # ========== ОСНОВНЫЕ ФУНКЦИИ ==========
-                elif text in ["/show", "📝 Показать код"]:
-                    code = user_sessions[user_id].get("code", "")
-                    send_message(chat_id, f"```python\n{code[:3000] if code else '# Код пуст'}\n```")
-                
-                elif text in ["/done", "💾 Скачать код"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        filename = f"code_{user_id}.py"
-                        with open(filename, "w") as f:
-                            f.write(code)
-                        send_document(chat_id, filename, "✅ Код")
-                        os.remove(filename)
+            # Преобразование кнопок в команды
+            if text in BUTTONS:
+                text = BUTTONS[text]
+                logger.info(f"Кнопка -> команда: {text}")
+            
+            # ========== КОМАНДЫ ==========
+            if text in ["/start", "/help"]:
+                send_message(chat_id, "🤖 *AI Code Bot*\n\nВыбери действие:", reply_markup=json.dumps(get_full_keyboard()))
+            
+            elif text == "/show":
+                code = user_sessions[user_id].get("code", "")
+                send_message(chat_id, f"```python\n{code[:3000] if code else '# Код пуст'}\n```")
+            
+            elif text == "/done":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    filename = f"code_{user_id}.py"
+                    with open(filename, "w") as f:
+                        f.write(code)
+                    send_document(chat_id, filename, "✅ Код")
+                    os.remove(filename)
+                else:
+                    send_message(chat_id, "❌ Нет кода")
+            
+            elif text == "/fix":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "🔧 AI исправляет код...")
+                    fixed = auto_fix_code(code)
+                    if fixed:
+                        user_sessions[user_id]["code"] = fixed
+                        send_message(chat_id, f"✅ Исправлено:\n```python\n{fixed[:1500]}\n```")
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/bugs":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "🐛 AI ищет ошибки...")
+                    bugs = find_bugs_ai(code)
+                    if bugs:
+                        report = "🔍 *Ошибки:*\n"
+                        for b in bugs[:5]:
+                            report += f"• {b.get('message', '')}\n"
+                        send_message(chat_id, report)
                     else:
-                        send_message(chat_id, "❌ Нет кода")
-                
-                elif text in ["/fix", "🔧 ИСПРАВИТЬ"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "🔧 AI исправляет код...")
-                        fixed = auto_fix_code(code)
-                        if fixed:
-                            user_sessions[user_id]["code"] = fixed
-                            send_message(chat_id, f"✅ Исправлено:\n```python\n{fixed[:1500]}\n```")
+                        send_message(chat_id, "✅ Ошибок не найдено")
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/complexity":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, analyze_complexity(code))
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/run":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "🏃 Запуск...")
+                    result = run_code_safe(code)
+                    if result["success"]:
+                        send_message(chat_id, f"✅ Выполнено!\n```\n{result['output'][:1500]}\n```")
                     else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/bugs", "🐛 ОШИБКИ"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "🐛 AI ищет ошибки...")
-                        bugs = find_bugs_ai(code)
-                        if bugs:
-                            report = "🔍 *Ошибки:*\n"
-                            for b in bugs[:5]:
-                                report += f"• {b.get('message', '')}\n"
-                            send_message(chat_id, report)
-                        else:
-                            send_message(chat_id, "✅ Ошибок не найдено!")
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/complexity", "📊 АНАЛИЗ"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, analyze_complexity(code))
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/run", "🏃 ЗАПУСТИТЬ"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "🏃 Запуск...")
-                        result = run_code_safe(code)
-                        if result["success"]:
-                            send_message(chat_id, f"✅ Выполнено!\n```\n{result['output'][:1500]}\n```")
-                        else:
-                            send_message(chat_id, f"❌ Ошибка:\n```\n{result['error'][:500]}\n```")
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/generate", "✨ ГЕНЕРАЦИЯ"]:
-                    send_message(chat_id, "📝 *Опиши код для генерации:*")
-                    user_sessions[user_id]["waiting_for"] = "generate"
-                
-                elif text in ["/smart_merge", "🧠 УМНАЯ СКЛЕЙКА"]:
-                    parts = user_sessions[user_id].get("parts", [])
-                    if parts:
-                        send_message(chat_id, "🧠 AI склеивает части...")
-                        merged = smart_merge(parts)
-                        if merged:
-                            user_sessions[user_id]["code"] = merged
-                            user_sessions[user_id]["parts"] = []
-                            send_message(chat_id, f"✅ Код склеен!\n\n/show — посмотреть")
-                    else:
-                        send_message(chat_id, "📭 Нет частей")
-                
-                elif text in ["/tests", "🧪 ТЕСТЫ"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "🧪 Генерация тестов...")
-                        tests = generate_tests(code)
-                        if tests:
-                            send_message(chat_id, f"✅ Тесты:\n```python\n{tests[:2000]}\n```")
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/review", "📋 CODE REVIEW"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "📋 Code Review...")
-                        review = code_review(code)
-                        send_message(chat_id, f"📋 *Review:*\n{review[:2000]}")
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/comment", "📝 КОММЕНТАРИИ"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "📝 Добавляю комментарии...")
-                        commented = add_comments(code)
-                        if commented:
-                            user_sessions[user_id]["code"] = commented
-                            send_message(chat_id, f"✅ Код с комментариями:\n```python\n{commented[:2000]}\n```")
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/pdf", "📄 ЭКСПОРТ PDF"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        html = create_pdf_export(code)
-                        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
-                            f.write(html)
-                            html_file = f.name
-                        send_document(chat_id, html_file, "📄 PDF")
-                        os.remove(html_file)
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                # ========== НОВЫЕ ФУНКЦИИ ==========
-                elif text in ["/format", "🎨 ФОРМАТИРОВАТЬ"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "🎨 Форматирование...")
-                        formatted = format_code(code)
-                        if formatted:
-                            user_sessions[user_id]["code"] = formatted
-                            send_message(chat_id, f"✅ Отформатировано:\n```python\n{formatted[:1500]}\n```")
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/search", "🔍 ПОИСК"]:
-                    send_message(chat_id, "🔍 *Введите текст для поиска:*")
-                    user_sessions[user_id]["waiting_for"] = "search"
-                
-                elif text in ["/replace", "🔄 ЗАМЕНИТЬ"]:
-                    send_message(chat_id, "🔄 *Формат:* `старое | новое`\nПример: `print | println`")
-                    user_sessions[user_id]["waiting_for"] = "replace"
-                
-                elif text in ["/fixbug", "🐞 FIX BUG"]:
-                    send_message(chat_id, "🐞 *Опишите баг для исправления:*")
-                    user_sessions[user_id]["waiting_for"] = "fixbug"
-                
-                elif text in ["/improve", "⚡ УЛУЧШИТЬ"]:
-                    send_message(chat_id, "⚡ *Опишите улучшение:*")
-                    user_sessions[user_id]["waiting_for"] = "improve"
-                
-                elif text in ["/explain", "📖 ОБЪЯСНИТЬ"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "📖 AI объясняет код...")
-                        explanation = explain_code(code)
-                        send_message(chat_id, f"📖 *Объяснение:*\n{explanation[:2000]}")
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/refactor", "🔧 РЕФАКТОРИНГ"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "🔧 Рефакторинг...")
-                        refactored = refactor_code_ai(code)
-                        if refactored:
-                            user_sessions[user_id]["code"] = refactored
-                            send_message(chat_id, f"✅ Отрефакторено:\n```python\n{refactored[:1500]}\n```")
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/translate", "🔄 ПЕРЕВОД"]:
-                    send_message(chat_id, "🌐 *Выбери язык:*\n\nPython → [JavaScript, Java, C++, Go, Rust]")
-                    user_sessions[user_id]["waiting_for"] = "translate_lang"
-                
-                elif text in ["/languages", "🌐 ДРУГИЕ ЯЗЫКИ"]:
-                    send_message(chat_id, "🌐 *Выбери язык:*", reply_markup=json.dumps(get_languages_keyboard()))
-                
-                elif text in ["/github_push", "🐙 GITHUB PUSH"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "📝 *Введите: репозиторий/файл.py*")
-                        user_sessions[user_id]["waiting_for"] = "github"
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/logic_bugs", "🧠 ЛОГИЧЕСКИЕ БАГИ"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "🧠 Поиск логических ошибок...")
-                        result = find_bugs_ai(code)
-                        if result:
-                            report = "🧠 *Логические ошибки:*\n"
-                            for b in result[:5]:
-                                report += f"• {b.get('message', '')}\n"
-                            send_message(chat_id, report)
-                        else:
-                            send_message(chat_id, "✅ Логических ошибок не найдено!")
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/test_report", "🏆 ТЕСТЫ С ОТЧЁТОМ"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "🧪 Генерация тестов...")
-                        tests = generate_tests(code)
-                        if tests:
-                            send_message(chat_id, f"🏆 *Тесты:*\n```python\n{tests[:2000]}\n```")
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/export_json", "📦 ЭКСПОРТ JSON"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        json_data = json.dumps({"code": code, "timestamp": str(datetime.now())})
-                        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                            f.write(json_data)
-                            fname = f.name
-                        send_document(chat_id, fname, "📦 JSON")
-                        os.remove(fname)
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif text in ["/export_html", "📄 ЭКСПОРТ HTML"]:
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        html = f"""<!DOCTYPE html>
+                        send_message(chat_id, f"❌ Ошибка:\n```\n{result['error'][:500]}\n```")
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/generate":
+                send_message(chat_id, "📝 *Опиши код для генерации:*")
+                user_sessions[user_id]["waiting_for"] = "generate"
+            
+            elif text == "/smart_merge":
+                parts = user_sessions[user_id].get("parts", [])
+                if parts:
+                    send_message(chat_id, "🧠 AI склеивает части...")
+                    merged = smart_merge(parts)
+                    if merged:
+                        user_sessions[user_id]["code"] = merged
+                        user_sessions[user_id]["parts"] = []
+                        send_message(chat_id, f"✅ Код склеен!\n\n/show — посмотреть")
+                else:
+                    send_message(chat_id, "📭 Нет частей")
+            
+            elif text == "/format":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "🎨 Форматирование...")
+                    formatted = format_code(code)
+                    if formatted:
+                        user_sessions[user_id]["code"] = formatted
+                        send_message(chat_id, f"✅ Отформатировано:\n```python\n{formatted[:1500]}\n```")
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/search":
+                send_message(chat_id, "🔍 *Введите текст для поиска:*")
+                user_sessions[user_id]["waiting_for"] = "search"
+            
+            elif text == "/replace":
+                send_message(chat_id, "🔄 *Формат:* `старое | новое`")
+                user_sessions[user_id]["waiting_for"] = "replace"
+            
+            elif text == "/fixbug":
+                send_message(chat_id, "🐞 *Опишите баг для исправления:*")
+                user_sessions[user_id]["waiting_for"] = "fixbug"
+            
+            elif text == "/improve":
+                send_message(chat_id, "⚡ *Опишите улучшение:*")
+                user_sessions[user_id]["waiting_for"] = "improve"
+            
+            elif text == "/explain":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "📖 AI объясняет код...")
+                    explanation = explain_code(code)
+                    send_message(chat_id, f"📖 *Объяснение:*\n{explanation[:2000]}")
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/refactor":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "🔧 Рефакторинг...")
+                    refactored = refactor_code_ai(code)
+                    if refactored:
+                        user_sessions[user_id]["code"] = refactored
+                        send_message(chat_id, f"✅ Отрефакторено:\n```python\n{refactored[:1500]}\n```")
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/translate":
+                send_message(chat_id, "🌐 *Выбери язык:*\nPython → JavaScript, Java, C++, Go, Rust")
+                user_sessions[user_id]["waiting_for"] = "translate_lang"
+            
+            elif text == "/tests":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "🧪 Генерация тестов...")
+                    tests = generate_tests(code)
+                    if tests:
+                        send_message(chat_id, f"✅ Тесты:\n```python\n{tests[:1500]}\n```")
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/review":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "📋 Code Review...")
+                    review = code_review(code)
+                    send_message(chat_id, f"📋 *Review:*\n{review[:2000]}")
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/comment":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "📝 Добавляю комментарии...")
+                    commented = add_comments(code)
+                    if commented:
+                        user_sessions[user_id]["code"] = commented
+                        send_message(chat_id, f"✅ Код с комментариями:\n```python\n{commented[:1500]}\n```")
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/pdf":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    html = create_pdf_export(code)
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
+                        f.write(html)
+                        html_file = f.name
+                    send_document(chat_id, html_file, "📄 PDF")
+                    os.remove(html_file)
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/export_json":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    json_data = json.dumps({
+                        "code": code,
+                        "timestamp": str(datetime.now()),
+                        "language": "python",
+                        "user_id": user_id
+                    })
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                        f.write(json_data)
+                        fname = f.name
+                    send_document(chat_id, fname, "📦 JSON экспорт")
+                    os.remove(fname)
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/export_html":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    escaped_code = code.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    html = f"""<!DOCTYPE html>
 <html>
-<head><title>Code Export</title>
-<style>body{{font-family:monospace;padding:20px;}}pre{{background:#f5f5f5;padding:15px;}}</style>
+<head><meta charset="UTF-8"><title>Экспорт кода</title>
+<style>body{{font-family:monospace;padding:20px;}}pre{{background:#f5f5f5;padding:15px;border-radius:8px;}}</style>
 </head>
 <body>
-<h1>Экспорт кода</h1>
+<h1>📄 Экспорт кода</h1>
 <p>Дата: {datetime.now()}</p>
-<pre>{code}</pre>
+<p>Пользователь: {user_id}</p>
+<pre>{escaped_code}</pre>
+<hr>
+<p>🤖 Создано AI Code Bot</p>
 </body>
 </html>"""
-                        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
-                            f.write(html)
-                            fname = f.name
-                        send_document(chat_id, fname, "📄 HTML")
-                        os.remove(fname)
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                # ========== ФАЙЛЫ ==========
-                elif text in ["/files", "📁 ФАЙЛЫ"]:
-                    files = user_sessions[user_id].get("files", {})
-                    if files:
-                        file_list = "\n".join([f"• {n}" for n in files.keys()])
-                        send_message(chat_id, f"📁 *Файлы:*\n{file_list}")
-                    else:
-                        send_message(chat_id, "📭 Нет файлов")
-                
-                elif text in ["/add_file", "➕ ДОБАВИТЬ ФАЙЛ"]:
-                    send_message(chat_id, "📝 Введите имя файла:")
-                    user_sessions[user_id]["waiting_for"] = "add_file"
-                
-                elif text in ["/undo", "🗑 Удалить последний"]:
-                    parts = user_sessions[user_id].get("parts", [])
-                    if parts:
-                        parts.pop()
-                        user_sessions[user_id]["parts"] = parts
-                        send_message(chat_id, f"🗑 Удалено. Осталось: {len(parts)}")
-                    else:
-                        send_message(chat_id, "📭 Нет частей")
-                
-                elif text in ["/history", "📜 ИСТОРИЯ"]:
-                    history = user_sessions[user_id].get("history", [])
-                    if history:
-                        msg = "📜 *История:*\n"
-                        for i, h in enumerate(history[-10:], 1):
-                            msg += f"{i}. {h.get('action', '')}\n"
-                        send_message(chat_id, msg)
-                    else:
-                        send_message(chat_id, "📭 История пуста")
-                
-                elif text in ["/reset", "🗑 ОЧИСТИТЬ ВСЁ"]:
-                    user_sessions[user_id] = {"code": "", "parts": [], "files": {"main.py": ""}, "current_file": "main.py", "history": [], "settings": {"notifications": True, "theme": "dark", "autosave": True}}
-                    send_message(chat_id, "🧹 Всё очищено!", reply_markup=json.dumps(get_full_keyboard()))
-                
-                # ========== НАСТРОЙКИ И СТАТИСТИКА ==========
-                elif text in ["/settings", "⚙️ НАСТРОЙКИ"]:
-                    send_message(chat_id, "⚙️ *Настройки:*", reply_markup=json.dumps(get_settings_keyboard()))
-                
-                elif text in ["/stats", "📊 СТАТИСТИКА"]:
-                    stats = get_stats(user_id)
-                    send_message(chat_id, stats)
-                
-                elif text in ["🔊 Уведомления ВКЛ"]:
-                    user_sessions[user_id]["settings"]["notifications"] = True
-                    send_message(chat_id, "🔊 Уведомления включены")
-                
-                elif text in ["🔇 Уведомления ВЫКЛ"]:
-                    user_sessions[user_id]["settings"]["notifications"] = False
-                    send_message(chat_id, "🔇 Уведомления выключены")
-                
-                elif text in ["🌙 Тёмная тема"]:
-                    user_sessions[user_id]["settings"]["theme"] = "dark"
-                    send_message(chat_id, "🌙 Тёмная тема установлена")
-                
-                elif text in ["☀️ Светлая тема"]:
-                    user_sessions[user_id]["settings"]["theme"] = "light"
-                    send_message(chat_id, "☀️ Светлая тема установлена")
-                
-                elif text in ["💾 Автосохранение ВКЛ"]:
-                    user_sessions[user_id]["settings"]["autosave"] = True
-                    send_message(chat_id, "💾 Автосохранение включено")
-                
-                elif text in ["💾 Автосохранение ВЫКЛ"]:
-                    user_sessions[user_id]["settings"]["autosave"] = False
-                    send_message(chat_id, "💾 Автосохранение выключено")
-                
-                elif text in ["🔙 НАЗАД"]:
-                    send_message(chat_id, "🔙 Назад в главное меню", reply_markup=json.dumps(get_full_keyboard()))
-                
-                # ========== ОБРАБОТКА ОЖИДАНИЙ ==========
-                elif user_sessions[user_id].get("waiting_for") == "generate":
-                    user_sessions[user_id]["waiting_for"] = None
-                    send_message(chat_id, "✨ Генерация...")
-                    generated = generate_code(text)
-                    if generated:
-                        user_sessions[user_id]["code"] = generated
-                        send_message(chat_id, f"✅ Сгенерировано:\n```python\n{generated[:2000]}\n```")
-                
-                elif user_sessions[user_id].get("waiting_for") == "search":
-                    user_sessions[user_id]["waiting_for"] = None
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        result = search_in_code(code, text)
-                        send_message(chat_id, result)
-                    else:
-                        send_message(chat_id, "📭 Нет кода для поиска")
-                
-                elif user_sessions[user_id].get("waiting_for") == "replace":
-                    user_sessions[user_id]["waiting_for"] = None
-                    if "|" in text:
-                        old, new = text.split("|", 1)
-                        old = old.strip()
-                        new = new.strip()
-                        code = user_sessions[user_id].get("code", "")
-                        if code.strip():
-                            new_code = replace_in_code(code, old, new)
-                            user_sessions[user_id]["code"] = new_code
-                            send_message(chat_id, f"✅ Заменено '{old}' на '{new}'\n\n/show — посмотреть")
-                        else:
-                            send_message(chat_id, "📭 Нет кода")
-                    else:
-                        send_message(chat_id, "❌ Формат: `старое | новое`")
-                
-                elif user_sessions[user_id].get("waiting_for") == "fixbug":
-                    user_sessions[user_id]["waiting_for"] = None
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "🐞 Исправление бага...")
-                        fixed = fix_bug_by_description(code, text)
-                        if fixed:
-                            user_sessions[user_id]["code"] = fixed
-                            send_message(chat_id, f"✅ Баг исправлен:\n```python\n{fixed[:1500]}\n```")
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif user_sessions[user_id].get("waiting_for") == "improve":
-                    user_sessions[user_id]["waiting_for"] = None
-                    code = user_sessions[user_id].get("code", "")
-                    if code.strip():
-                        send_message(chat_id, "⚡ Улучшение кода...")
-                        improved = improve_code_by_description(code, text)
-                        if improved:
-                            user_sessions[user_id]["code"] = improved
-                            send_message(chat_id, f"✅ Код улучшен:\n```python\n{improved[:1500]}\n```")
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif user_sessions[user_id].get("waiting_for") == "translate_lang":
-                    user_sessions[user_id]["waiting_for"] = None
-                    code = user_sessions[user_id].get("code", "")
-                    lang_map = {
-                        "javascript": "JavaScript", "js": "JavaScript",
-                        "java": "Java", "cpp": "C++", "c++": "C++",
-                        "go": "Go", "rust": "Rust"
-                    }
-                    target = lang_map.get(text.lower(), text)
-                    if code.strip():
-                        send_message(chat_id, f"🔄 Перевод на {target}...")
-                        translated = convert_code(code, target)
-                        if translated:
-                            user_sessions[user_id]["code"] = translated
-                            send_message(chat_id, f"✅ Переведено на {target}:\n```\n{translated[:1500]}\n```")
-                    else:
-                        send_message(chat_id, "📭 Нет кода")
-                
-                elif user_sessions[user_id].get("waiting_for") == "github":
-                    user_sessions[user_id]["waiting_for"] = None
-                    if "/" in text:
-                        parts = text.split("/", 1)
-                        repo = parts[0]
-                        filename = parts[1]
-                        code = user_sessions[user_id].get("code", "")
-                        send_message(chat_id, f"🐙 Отправка в GitHub {repo}/{filename}...\n(требуется токен)")
-                    else:
-                        send_message(chat_id, "❌ Формат: `репозиторий/файл.py`")
-                
-                elif user_sessions[user_id].get("waiting_for") == "add_file":
-                    user_sessions[user_id]["waiting_for"] = None
-                    filename = text.strip()
-                    user_sessions[user_id]["files"][filename] = ""
-                    send_message(chat_id, f"✅ Файл {filename} создан")
-                
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
+                        f.write(html)
+                        fname = f.name
+                    send_document(chat_id, fname, "📄 HTML экспорт")
+                    os.remove(fname)
                 else:
-                    send_message(chat_id, "❓ Неизвестная команда. /help", reply_markup=json.dumps(get_full_keyboard()))
+                    send_message(chat_id, "📭 Нет кода")
             
-            else:
+            elif text == "/test_report":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "🏆 Запуск тестов с отчётом...")
+                    report = run_tests_with_report(code)
+                    send_message(chat_id, report)
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/logic_bugs":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "🧠 Поиск логических ошибок...")
+                    result = find_logic_bugs(code)
+                    bugs = result.get("bugs", [])
+                    if bugs:
+                        report = "🧠 *Логические ошибки:*\n"
+                        for b in bugs[:5]:
+                            report += f"• {b.get('message', '')}\n"
+                        send_message(chat_id, report)
+                    else:
+                        send_message(chat_id, "✅ Логических ошибок не найдено")
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/github_push":
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "📝 *Формат:* `репозиторий/файл.py`")
+                    user_sessions[user_id]["waiting_for"] = "github"
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif text == "/files":
+                files = user_sessions[user_id].get("files", {})
+                if files:
+                    file_list = "\n".join([f"• {n}" for n in files.keys()])
+                    send_message(chat_id, f"📁 *Файлы:*\n{file_list}\n\n📄 Текущий: {user_sessions[user_id].get('current_file', 'main.py')}")
+                else:
+                    send_message(chat_id, "📭 Нет файлов")
+            
+            elif text == "/add_file":
+                send_message(chat_id, "📝 Введите имя файла:")
+                user_sessions[user_id]["waiting_for"] = "add_file"
+            
+            elif text == "/undo":
                 parts = user_sessions[user_id].get("parts", [])
-                parts.append(text)
-                user_sessions[user_id]["parts"] = parts
-                user_sessions[user_id]["code"] = text if not user_sessions[user_id]["code"] else user_sessions[user_id]["code"] + "\n\n" + text
-                user_sessions[user_id]["history"].append({"time": datetime.now().strftime("%H:%M:%S"), "action": f"Часть {len(parts)}"})
-                send_message(chat_id, f"✅ *Часть {len(parts)} сохранена!*\n\n🧠 /smart_merge — склеить")
+                if parts:
+                    last = parts.pop()
+                    user_sessions[user_id]["parts"] = parts
+                    send_message(chat_id, f"🗑 Удалена последняя часть. Осталось: {len(parts)}")
+                else:
+                    send_message(chat_id, "📭 Нет частей")
+            
+            elif text == "/history":
+                history = user_sessions[user_id].get("history", [])
+                if history:
+                    msg = "📜 *История:*\n"
+                    for i, h in enumerate(history[-10:], 1):
+                        msg += f"{i}. {h.get('action', '')}\n"
+                    send_message(chat_id, msg)
+                else:
+                    send_message(chat_id, "📭 История пуста")
+            
+            elif text == "/stats":
+                send_message(chat_id, get_stats(user_id))
+            
+            elif text == "/settings":
+                send_message(chat_id, "⚙️ *Настройки:*", reply_markup=json.dumps(get_settings_keyboard()))
+            
+            elif text == "/reset":
+                user_sessions[user_id] = {
+                    "code": "", "parts": [], "files": {"main.py": ""},
+                    "current_file": "main.py", "history": [],
+                    "settings": {"notifications": True, "theme": "dark", "autosave": True}
+                }
+                send_message(chat_id, "🧹 Всё очищено!", reply_markup=json.dumps(get_full_keyboard()))
+            
+            # ========== ОБРАБОТКА СОСТОЯНИЙ ==========
+            elif user_sessions[user_id].get("waiting_for") == "generate":
+                user_sessions[user_id]["waiting_for"] = None
+                send_message(chat_id, "✨ AI генерирует код... (10-15 сек)")
+                generated = generate_code(text)
+                if generated:
+                    user_sessions[user_id]["code"] = generated
+                    send_message(chat_id, f"✅ *Сгенерировано:*\n```python\n{generated[:2000]}\n```")
+                else:
+                    send_message(chat_id, "❌ Ошибка генерации")
+            
+            elif user_sessions[user_id].get("waiting_for") == "search":
+                user_sessions[user_id]["waiting_for"] = None
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    result = search_in_code(code, text)
+                    send_message(chat_id, result)
+                else:
+                    send_message(chat_id, "📭 Нет кода для поиска")
+            
+            elif user_sessions[user_id].get("waiting_for") == "replace":
+                user_sessions[user_id]["waiting_for"] = None
+                if "|" in text:
+                    old, new = text.split("|", 1)
+                    old = old.strip()
+                    new = new.strip()
+                    code = user_sessions[user_id].get("code", "")
+                    if code.strip():
+                        new_code = replace_in_code(code, old, new)
+                        user_sessions[user_id]["code"] = new_code
+                        send_message(chat_id, f"✅ Заменено '{old}' на '{new}'")
+                    else:
+                        send_message(chat_id, "📭 Нет кода")
+                else:
+                    send_message(chat_id, "❌ Формат: `старое | новое`")
+            
+            elif user_sessions[user_id].get("waiting_for") == "fixbug":
+                user_sessions[user_id]["waiting_for"] = None
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "🐞 Исправление бага...")
+                    fixed = fix_bug_by_description(code, text)
+                    if fixed:
+                        user_sessions[user_id]["code"] = fixed
+                        send_message(chat_id, f"✅ Баг исправлен!\n```python\n{fixed[:1500]}\n```")
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif user_sessions[user_id].get("waiting_for") == "improve":
+                user_sessions[user_id]["waiting_for"] = None
+                code = user_sessions[user_id].get("code", "")
+                if code.strip():
+                    send_message(chat_id, "⚡ Улучшение кода...")
+                    improved = improve_code_by_description(code, text)
+                    if improved:
+                        user_sessions[user_id]["code"] = improved
+                        send_message(chat_id, f"✅ Код улучшен!\n```python\n{improved[:1500]}\n```")
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif user_sessions[user_id].get("waiting_for") == "translate_lang":
+                user_sessions[user_id]["waiting_for"] = None
+                code = user_sessions[user_id].get("code", "")
+                lang_map = {"javascript": "JavaScript", "js": "JavaScript", "java": "Java", "cpp": "C++", "go": "Go", "rust": "Rust"}
+                target = lang_map.get(text.lower(), text)
+                if code.strip():
+                    send_message(chat_id, f"🔄 Перевод на {target}...")
+                    translated = translate_code(code, target)
+                    if translated:
+                        user_sessions[user_id]["code"] = translated
+                        send_message(chat_id, f"✅ Переведено на {target}:\n```\n{translated[:1500]}\n```")
+                else:
+                    send_message(chat_id, "📭 Нет кода")
+            
+            elif user_sessions[user_id].get("waiting_for") == "github":
+                user_sessions[user_id]["waiting_for"] = None
+                if "/" in text:
+                    repo, filename = text.split("/", 1)
+                    code = user_sessions[user_id].get("code", "")
+                    result = github_push(repo, filename, code)
+                    send_message(chat_id, result)
+                else:
+                    send_message(chat_id, "❌ Формат: `репозиторий/файл.py`")
+            
+            elif user_sessions[user_id].get("waiting_for") == "add_file":
+                user_sessions[user_id]["waiting_for"] = None
+                filename = text.strip()
+                user_sessions[user_id]["files"][filename] = ""
+                user_sessions[user_id]["current_file"] = filename
+                send_message(chat_id, f"✅ Файл `{filename}` создан!")
+            
+            elif text.startswith("/notify_"):
+                setting = text.replace("/notify_", "")
+                user_sessions[user_id]["settings"]["notifications"] = (setting == "on")
+                send_message(chat_id, f"🔊 Уведомления {'включены' if setting == 'on' else 'выключены'}")
+            
+            elif text.startswith("/theme_"):
+                theme = text.replace("/theme_", "")
+                user_sessions[user_id]["settings"]["theme"] = theme
+                send_message(chat_id, f"🎨 Тема установлена: {theme}")
+            
+            elif text.startswith("/autosave_"):
+                autosave = text.replace("/autosave_", "")
+                user_sessions[user_id]["settings"]["autosave"] = (autosave == "on")
+                send_message(chat_id, f"💾 Автосохранение {'включено' if autosave == 'on' else 'выключено'}")
+            
+            # ========== ОБЫЧНЫЙ ТЕКСТ (НЕ КОМАНДА) ==========
+            else:
+                greetings = ["привет", "здравствуй", "hello", "hi", "ку", "здарова", "добрый день", "доброе утро"]
+                if text.lower().strip() in greetings:
+                    send_message(chat_id, "👋 *Привет!* Я AI Code Bot.\n\n📝 Отправь код, и я помогу:\n🔧 /fix — исправить ошибки\n✨ /generate — создать код\n🏃 /run — выполнить код\n📝 /show — показать код\n\n❓ /help — все команды")
+                else:
+                    parts = user_sessions[user_id].get("parts", [])
+                    parts.append(text)
+                    user_sessions[user_id]["parts"] = parts
+                    if user_sessions[user_id]["code"]:
+                        user_sessions[user_id]["code"] += "\n\n" + text
+                    else:
+                        user_sessions[user_id]["code"] = text
+                    user_sessions[user_id]["history"].append({"time": datetime.now().strftime("%H:%M:%S"), "action": f"Часть {len(parts)}"})
+                    send_message(chat_id, f"✅ *Часть {len(parts)} сохранена!*\n\n🔧 /fix — исправить\n✨ /generate — создать код")
         
         return jsonify({"ok": True}), 200
     except Exception as e:
         logger.error(f"Ошибка: {e}")
         return jsonify({"ok": False}), 500
-
-def get_languages_keyboard():
-    return {
-        "inline_keyboard": [
-            [{"text": "🐍 Python", "callback_data": "lang_python"}],
-            [{"text": "📜 JavaScript", "callback_data": "lang_javascript"}],
-            [{"text": "☕ Java", "callback_data": "lang_java"}],
-            [{"text": "⚡ C++", "callback_data": "lang_cpp"}],
-            [{"text": "🚀 Go", "callback_data": "lang_go"}],
-            [{"text": "🦀 Rust", "callback_data": "lang_rust"}]
-        ]
-    }
 
 @app.route("/")
 def health():
